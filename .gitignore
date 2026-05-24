@@ -1,6 +1,7 @@
 # Environment
 .env
 .env.local
+backend/**/appsettings*.json
 
 # Test content (developers download their own)
 test-books/
