@@ -19,14 +19,31 @@
     "react-native-webview": "13.16.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.60.0",
+    "@react-native/jest-preset": "^0.85.3",
+    "@testing-library/jest-native": "^5.4.3",
+    "@testing-library/react-native": "^13.3.3",
+    "@types/jest": "^30.0.0",
     "@types/react": "~19.2.2",
+    "detox": "^20.50.4",
+    "jest": "^30.4.2",
+    "jest-expo": "^56.0.4",
     "typescript": "~6.0.3"
   },
   "scripts": {
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "test": "jest",
+    "test:watch": "jest --watchAll",
+    "test:coverage": "jest --coverage",
+    "test:e2e:web": "playwright test",
+    "test:e2e:web:ui": "playwright test --ui",
+    "test:e2e:ios": "detox test --configuration ios.sim.debug",
+    "test:e2e:android": "detox test --configuration android.emu.debug",
+    "test:e2e:ios:build": "detox build --configuration ios.sim.debug",
+    "test:e2e:android:build": "detox build --configuration android.emu.debug"
   },
   "private": true
 }

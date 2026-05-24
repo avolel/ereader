@@ -94,3 +94,97 @@ Never test implementation details. Tests should break when behavior changes, not
 
 ### Isolation
 Each test is fully self-contained: it arranges its own state, does not share mutable state with other tests, and cleans up after itself. DB tests roll back or use isolated transactions.
+
+---
+
+## Testing Frameworks
+
+### Backend — xUnit (C#)
+
+**Stack:** xUnit · FluentAssertions · Moq · EF Core InMemory · coverlet
+
+Project: `backend/EReader.Tests/`
+
+```bash
+# Run all tests
+cd backend && dotnet test
+
+# Run with coverage report
+cd backend && dotnet test --collect:"XPlat Code Coverage"
+
+# Run a specific test project
+cd backend && dotnet test EReader.Tests/EReader.Tests.csproj
+
+# Run tests matching a filter
+cd backend && dotnet test --filter "FullyQualifiedName~ServiceName"
+
+# Watch mode (requires dotnet-watch)
+cd backend && dotnet watch test
+```
+
+Use `Moq` for mocking service dependencies. Use `EF Core InMemory` provider for repository-level tests that need a DB context without spinning up Postgres.
+
+---
+
+### Frontend — Jest + React Native Testing Library
+
+**Stack:** jest-expo · @testing-library/react-native · @testing-library/jest-native
+
+Test files: `src/**/__tests__/*.{ts,tsx}` or `src/**/*.test.{ts,tsx}`
+
+```bash
+cd frontend
+
+# Run all unit/component tests
+npm test
+
+# Watch mode (re-runs on file change)
+npm run test:watch
+
+# With coverage report
+npm run test:coverage
+```
+
+Query by role, text, or label — never by test ID or internal prop. Data fetching lives in hooks; test hooks with `renderHook` from RNTL.
+
+---
+
+### Frontend — Playwright (Web E2E)
+
+**Stack:** @playwright/test · Chromium
+
+Test files: `frontend/e2e/web/**/*.spec.ts`
+
+Playwright auto-starts the Expo web server (`npx expo start --web`) before running tests.
+
+```bash
+cd frontend
+
+# Run all web E2E tests (headless)
+npm run test:e2e:web
+
+# Run with interactive UI (debug mode)
+npm run test:e2e:web:ui
+```
+
+---
+
+### Frontend — Detox (iOS / Android E2E)
+
+**Stack:** detox · jest
+
+Test files: `frontend/e2e/native/**/*.test.ts`
+
+> **Not active yet — requires native builds.** Run `npx expo prebuild` first to generate `ios/` and `android/` directories before using any Detox command.
+
+```bash
+cd frontend
+
+# Build the native app for testing (one-time per config change)
+npm run test:e2e:ios:build
+npm run test:e2e:android:build
+
+# Run E2E tests
+npm run test:e2e:ios
+npm run test:e2e:android
+```
