@@ -1,5 +1,14 @@
+using DotNetEnv;
 using Microsoft.EntityFrameworkCore;
 using EReader.Data;
+
+// In Development, load .env from the project directory so DATABASE_URL is available
+// to the configuration system. In production, DATABASE_URL must be set as a real
+// environment variable — no .env file should exist there.
+if (Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") == "Development")
+{
+    Env.TraversePath().Load();
+}
 
 var builder = WebApplication.CreateBuilder(args);
 
