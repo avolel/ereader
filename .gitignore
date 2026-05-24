@@ -5,6 +5,9 @@
 # Test content (developers download their own)
 test-books/
 
+# Docs folder not needed in the repo
+docs/
+
 # Dictionary data
 backend/EReader.Api/Data/*.sqlite
 
