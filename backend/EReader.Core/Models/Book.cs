@@ -8,7 +8,10 @@ public class Book
     public string Author { get; set; } = string.Empty;
     public string? Language { get; set; }
     public string? Publisher { get; set; }
+    // EPUB OPF dates are inconsistent (year only, partial dates, "circa", etc.),
+    // so the raw value is kept as a string. PublishedYear is a parsed-out int for sorting/filtering.
     public string? PublishedDate { get; set; }
+    public int? PublishedYear { get; set; }
     public string? Description { get; set; }
     public string FilePath { get; set; } = string.Empty;
     public string FileHash { get; set; } = string.Empty;

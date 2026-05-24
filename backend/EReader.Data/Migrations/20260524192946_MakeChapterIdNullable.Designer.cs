@@ -3,6 +3,7 @@ using System;
 using EReader.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace EReader.Data.Migrations
 {
     [DbContext(typeof(EReaderDbContext))]
-    partial class EReaderDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260524192946_MakeChapterIdNullable")]
+    partial class MakeChapterIdNullable
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -106,9 +109,6 @@ namespace EReader.Data.Migrations
 
                     b.Property<string>("PublishedDate")
                         .HasColumnType("text");
-
-                    b.Property<int?>("PublishedYear")
-                        .HasColumnType("integer");
 
                     b.Property<string>("Publisher")
                         .HasColumnType("text");
@@ -275,7 +275,7 @@ namespace EReader.Data.Migrations
                     b.HasOne("EReader.Core.Models.User", "User")
                         .WithMany("Annotations")
                         .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Restrict)
+                        .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
                     b.Navigation("Book");
@@ -290,7 +290,7 @@ namespace EReader.Data.Migrations
                     b.HasOne("EReader.Core.Models.User", "User")
                         .WithMany("Books")
                         .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Restrict)
+                        .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
                     b.Navigation("User");
@@ -312,7 +312,7 @@ namespace EReader.Data.Migrations
                     b.HasOne("EReader.Core.Models.User", "User")
                         .WithMany("Bookmarks")
                         .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Restrict)
+                        .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
                     b.Navigation("Book");
@@ -343,7 +343,7 @@ namespace EReader.Data.Migrations
                     b.HasOne("EReader.Core.Models.User", "User")
                         .WithMany("ReadingSettings")
                         .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Restrict)
+                        .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
                     b.Navigation("Book");

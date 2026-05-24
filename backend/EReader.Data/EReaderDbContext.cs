@@ -20,6 +20,15 @@ public class EReaderDbContext(DbContextOptions<EReaderDbContext> options) : DbCo
         {
             book.HasIndex(b => b.FileHash);
             book.HasIndex(b => new { b.UserId, b.FileHash }).IsUnique();
+
+            // Restrict (not Cascade) so deleting a user doesn't silently wipe their
+            // library. Forces the service layer to make an explicit choice: hard-delete
+            // the library first, or (future) soft-delete/anonymize the user and leave
+            // owned rows intact. Keeps the soft-delete door open without DB rework.
+            book.HasOne(b => b.User)
+                .WithMany(u => u.Books)
+                .HasForeignKey(b => b.UserId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<Chapter>(chapter =>
@@ -39,18 +48,21 @@ public class EReaderDbContext(DbContextOptions<EReaderDbContext> options) : DbCo
                 .HasForeignKey(a => a.BookId)
                 .OnDelete(DeleteBehavior.Cascade);
 
-            // Restrict here avoids the multi-path cascade that PostgreSQL rejects:
-            // Book→Chapter (Cascade) + Annotation→Chapter (Cascade) would be two
-            // deletion paths to the same row. The Book cascade already handles cleanup.
+            // SetNull (not Cascade) so a chapter can be regenerated on EPUB re-import
+            // without dropping the user's annotations. TextAnchor is the durable
+            // identity; ChapterId is re-resolved at read time when null.
             annotation.HasOne(a => a.Chapter)
                 .WithMany(c => c.Annotations)
                 .HasForeignKey(a => a.ChapterId)
-                .OnDelete(DeleteBehavior.Restrict);
+                .OnDelete(DeleteBehavior.SetNull);
 
+            // Restrict on User: same reasoning as Book — preserve the option of
+            // soft-delete/anonymization. Book → Annotations stays Cascade so book
+            // deletion still cleans up normally.
             annotation.HasOne(a => a.User)
                 .WithMany(u => u.Annotations)
                 .HasForeignKey(a => a.UserId)
-                .OnDelete(DeleteBehavior.Cascade);
+                .OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<Bookmark>(bookmark =>
@@ -63,12 +75,12 @@ public class EReaderDbContext(DbContextOptions<EReaderDbContext> options) : DbCo
             bookmark.HasOne(bm => bm.Chapter)
                 .WithMany(c => c.Bookmarks)
                 .HasForeignKey(bm => bm.ChapterId)
-                .OnDelete(DeleteBehavior.Restrict);
+                .OnDelete(DeleteBehavior.SetNull);
 
             bookmark.HasOne(bm => bm.User)
                 .WithMany(u => u.Bookmarks)
                 .HasForeignKey(bm => bm.UserId)
-                .OnDelete(DeleteBehavior.Cascade);
+                .OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<ReadingSetting>(rs =>
@@ -80,7 +92,7 @@ public class EReaderDbContext(DbContextOptions<EReaderDbContext> options) : DbCo
             rs.HasOne(r => r.User)
                 .WithMany(u => u.ReadingSettings)
                 .HasForeignKey(r => r.UserId)
-                .OnDelete(DeleteBehavior.Cascade);
+                .OnDelete(DeleteBehavior.Restrict);
 
             rs.HasOne(r => r.Book)
                 .WithMany(b => b.ReadingSettings)
