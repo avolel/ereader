@@ -1,0 +1,12 @@
+{
+  "recommendations": [
+    "ms-dotnettools.csdevkit",
+    "ms-dotnettools.csharp",
+    "esbenp.prettier-vscode",
+    "dbaeumer.vscode-eslint",
+    "ms-azuretools.vscode-docker",
+    "ckolkman.vscode-postgres",
+    "bradlc.vscode-tailwindcss",
+    "ms-playwright.playwright"
+  ]
+}

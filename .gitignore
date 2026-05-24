@@ -1,0 +1,19 @@
+# Environment
+.env
+.env.local
+
+# Test content (developers download their own)
+test-books/
+
+# Dictionary data
+backend/EReader.Api/Data/*.sqlite
+
+# Build artefacts
+backend/**/bin/
+backend/**/obj/
+frontend/.expo/
+frontend/node_modules/
+
+# OS
+.DS_Store
+Thumbs.db

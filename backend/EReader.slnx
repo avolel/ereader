@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="EReader.Api/EReader.Api.csproj" />
+  <Project Path="EReader.Core/EReader.Core.csproj" />
+  <Project Path="EReader.Data/EReader.Data.csproj" />
+  <Project Path="EReader.Tests/EReader.Tests.csproj" />
+</Solution>
