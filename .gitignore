@@ -8,6 +8,8 @@ test-books/
 # Docs folder not needed in the repo
 docs/
 
+plans/
+
 # Dictionary data
 backend/EReader.Api/Data/*.sqlite
 
