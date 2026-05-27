@@ -5,7 +5,9 @@ using EReader.Core.Interfaces;
 using EReader.Core.Services;
 using EReader.Data;
 using EReader.Data.Auth;
+using EReader.Data.Parsing;
 using EReader.Data.Repositories;
+using EReader.Data.Storage;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc.Authorization;
 using Microsoft.EntityFrameworkCore;
@@ -71,6 +73,19 @@ builder.Services.AddScoped<IUserService, UserService>();
 
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ICurrentUserService, HttpContextCurrentUserService>();
+
+// Book ingestion + reading. File store is singleton (just holds the root path,
+// no per-request state); parser/asset-reader are stateless transients.
+builder.Services
+    .AddOptions<BookStorageOptions>()
+    .Bind(builder.Configuration.GetSection(BookStorageOptions.SectionName));
+
+builder.Services.AddSingleton<IBookFileStore, LocalBookFileStore>();
+builder.Services.AddTransient<IEpubParser, EpubParserAdapter>();
+builder.Services.AddTransient<IEpubAssetReader, ZipEpubAssetReader>();
+builder.Services.AddScoped<IBookRepository, BookRepository>();
+builder.Services.AddScoped<IBookService, BookService>();
+builder.Services.AddScoped<IBookIngestionService, BookIngestionService>();
 
 var app = builder.Build();
 
