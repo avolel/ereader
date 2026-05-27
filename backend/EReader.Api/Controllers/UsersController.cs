@@ -31,15 +31,14 @@ public sealed class UsersController : ControllerBase
         [FromBody] UpdateUserRequest request,
         CancellationToken ct)
     {
-        var userId = _currentUser.GetCurrentUserId();
-
         if (request.Username is null)
         {
-            // No-op update: PATCH with nothing to change. Return the current state.
-            var current = await _users.GetCurrentAsync(userId, ct);
-            return Ok(UserProfileResponse.From(current));
+            // PATCH with nothing to change: be honest about it (and skip the DB
+            // roundtrip that re-reads the unchanged user).
+            return NoContent();
         }
 
+        var userId = _currentUser.GetCurrentUserId();
         var updated = await _users.UpdateUsernameAsync(userId, request.Username, ct);
         return Ok(UserProfileResponse.From(updated));
     }
@@ -49,7 +48,7 @@ public sealed class UsersController : ControllerBase
         [FromBody] ChangePasswordRequest request,
         CancellationToken ct)
     {
-        if (string.IsNullOrEmpty(request.CurrentPassword))
+        if (string.IsNullOrWhiteSpace(request.CurrentPassword))
         {
             throw new ValidationException("Current password is required.");
         }

@@ -114,7 +114,7 @@ public class AuthServiceTests
     }
 
     [Fact]
-    public async Task Should_RevokeOldRefresh_When_Rotating()
+    public async Task Should_CallConsumeAndIssueNew_When_Rotating()
     {
         var user = BuildUser();
         var family = Guid.NewGuid();

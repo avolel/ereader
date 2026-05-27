@@ -36,7 +36,10 @@ public sealed class UserRepository : IUserRepository
 
     public Task UpdateAsync(User user, CancellationToken ct)
     {
-        _db.Users.Update(user);
+        // Callers fetched the entity through this same DbContext, so it's already
+        // tracked. Skip the Update() call — change-tracking emits an UPDATE only
+        // for the columns that actually changed (e.g. just LastLoginAt on login),
+        // whereas Update() would force a full-column UPDATE every time.
         return _db.SaveChangesAsync(ct);
     }
 }

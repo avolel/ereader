@@ -17,7 +17,6 @@ namespace EReader.Data.Auth;
 public sealed class RedisRefreshTokenStore : IRefreshTokenStore
 {
     private readonly IConnectionMultiplexer _redis;
-    private readonly JwtOptions _jwt;
     private readonly RedisOptions _redisOptions;
 
     // Atomic check-and-revoke: returns 0=not_found, 1=consumed_ok, 2=reuse_detected.
@@ -32,11 +31,9 @@ public sealed class RedisRefreshTokenStore : IRefreshTokenStore
 
     public RedisRefreshTokenStore(
         IConnectionMultiplexer redis,
-        IOptions<JwtOptions> jwt,
         IOptions<RedisOptions> redisOptions)
     {
         _redis = redis;
-        _jwt = jwt.Value;
         _redisOptions = redisOptions.Value;
     }
 
@@ -47,7 +44,7 @@ public sealed class RedisRefreshTokenStore : IRefreshTokenStore
         var raw = GenerateToken();
         var hash = Hash(raw);
         var family = familyId ?? Guid.NewGuid();
-        var ttl = TimeSpan.FromDays(_jwt.RefreshTokenDays);
+        var ttl = TimeSpan.FromDays(_redisOptions.RefreshTokenDays);
         var expiresAt = DateTime.UtcNow.Add(ttl);
 
         var db = _redis.GetDatabase();
@@ -151,13 +148,13 @@ public sealed class RedisRefreshTokenStore : IRefreshTokenStore
 
         var db = _redis.GetDatabase();
         var families = await db.SetMembersAsync(UserKey(userId));
-        foreach (var fam in families)
-        {
-            if (Guid.TryParse(fam.ToString(), out var familyId))
-            {
-                await RevokeFamilyAsync(familyId, ct);
-            }
-        }
+
+        var tasks = families
+            .Select(f => Guid.TryParse(f.ToString(), out var id) ? (Guid?)id : null)
+            .Where(id => id is not null)
+            .Select(id => RevokeFamilyAsync(id!.Value, ct));
+
+        await Task.WhenAll(tasks);
     }
 
     public async Task RevokeOtherFamiliesAsync(Guid userId, Guid keepFamilyId, CancellationToken ct)
@@ -166,13 +163,13 @@ public sealed class RedisRefreshTokenStore : IRefreshTokenStore
 
         var db = _redis.GetDatabase();
         var families = await db.SetMembersAsync(UserKey(userId));
-        foreach (var fam in families)
-        {
-            if (Guid.TryParse(fam.ToString(), out var familyId) && familyId != keepFamilyId)
-            {
-                await RevokeFamilyAsync(familyId, ct);
-            }
-        }
+
+        var tasks = families
+            .Select(f => Guid.TryParse(f.ToString(), out var id) ? (Guid?)id : null)
+            .Where(id => id is not null && id != keepFamilyId)
+            .Select(id => RevokeFamilyAsync(id!.Value, ct));
+
+        await Task.WhenAll(tasks);
     }
 
     private RedisKey TokenKey(string hash) =>

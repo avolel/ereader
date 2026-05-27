@@ -62,7 +62,9 @@ builder.AddEreaderAuth();
 // Auth services + helpers.
 builder.Services.AddSingleton<IPasswordHasher, BCryptPasswordHasher>();
 builder.Services.AddSingleton<IJwtTokenIssuer, JwtTokenIssuer>();
-builder.Services.AddScoped<IRefreshTokenStore, RedisRefreshTokenStore>();
+// Singleton: the store has no per-request state — its only dependencies are the
+// singleton IConnectionMultiplexer and IOptions<RedisOptions>.
+builder.Services.AddSingleton<IRefreshTokenStore, RedisRefreshTokenStore>();
 builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IUserService, UserService>();
@@ -82,7 +84,7 @@ if (app.Environment.IsDevelopment())
     using (var scope = app.Services.CreateScope())
     {
         var db = scope.ServiceProvider.GetRequiredService<EReaderDbContext>();
-        db.Database.Migrate();
+        await db.Database.MigrateAsync();
     }
 
     app.UseSwagger();
