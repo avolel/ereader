@@ -124,19 +124,25 @@ public sealed class BookService : IBookService
     internal static (DateTime? ImportedAt, Guid? BookId) DecodeCursor(string? cursor)
     {
         if (string.IsNullOrWhiteSpace(cursor)) return (null, null);
+
+        // Surface malformed cursors as a 400 rather than silently restarting from page 1.
+        // A client paginating forward with a corrupt cursor would otherwise loop on page 1
+        // forever and never see the bug; better to fail loudly.
         try
         {
             var raw = Encoding.UTF8.GetString(Convert.FromBase64String(cursor));
             var parts = raw.Split(':', 2);
-            if (parts.Length != 2) return (null, null);
-            if (!long.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out var ticks)) return (null, null);
-            if (!Guid.TryParse(parts[1], out var id)) return (null, null);
+            if (parts.Length != 2) throw new ValidationException("Invalid cursor.");
+            if (!long.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out var ticks))
+            {
+                throw new ValidationException("Invalid cursor.");
+            }
+            if (!Guid.TryParse(parts[1], out var id)) throw new ValidationException("Invalid cursor.");
             return (new DateTime(ticks, DateTimeKind.Utc), id);
         }
         catch (FormatException)
         {
-            // Bad base64 → treat as no cursor rather than 500-ing.
-            return (null, null);
+            throw new ValidationException("Invalid cursor.");
         }
     }
 

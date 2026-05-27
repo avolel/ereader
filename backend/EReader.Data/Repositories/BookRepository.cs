@@ -82,11 +82,11 @@ public sealed class BookRepository : IBookRepository
 
     public async Task AddAsync(Book book, IEnumerable<Chapter> chapters, CancellationToken ct)
     {
-        await using var tx = await _db.Database.BeginTransactionAsync(ct);
+        // SaveChangesAsync is already atomic — EF opens an implicit transaction
+        // for a single call, so no explicit BeginTransaction is needed.
         await _db.Books.AddAsync(book, ct);
         await _db.Chapters.AddRangeAsync(chapters, ct);
         await _db.SaveChangesAsync(ct);
-        await tx.CommitAsync(ct);
     }
 
     public async Task RemoveAsync(Book book, CancellationToken ct)

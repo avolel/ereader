@@ -58,7 +58,7 @@ public class BookIngestionServiceTests
     }
 
     [Fact]
-    public async Task Should_AcceptUpload_When_ContentTypeIsEpubEvenWithoutExtension()
+    public async Task Should_AcceptUpload_When_ContentTypeIsEpub()
     {
         _books.Setup(r => r.ExistsByHashAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(false);

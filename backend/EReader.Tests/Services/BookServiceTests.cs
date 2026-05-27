@@ -236,11 +236,21 @@ public class BookServiceTests
     }
 
     [Fact]
-    public void Should_ReturnEmptyCursor_When_DecodingGarbage()
+    public void Should_ThrowValidation_When_DecodingMalformedCursor()
     {
-        var (time, id) = BookService.DecodeCursor("@@@not-base64@@@");
+        var act = () => BookService.DecodeCursor("@@@not-base64@@@");
 
-        time.Should().BeNull();
-        id.Should().BeNull();
+        act.Should().Throw<ValidationException>();
+    }
+
+    [Fact]
+    public void Should_ThrowValidation_When_DecodingStructurallyInvalidCursor()
+    {
+        // Valid base64 but the decoded payload doesn't split into "ticks:guid".
+        var bogus = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes("not-a-cursor"));
+
+        var act = () => BookService.DecodeCursor(bogus);
+
+        act.Should().Throw<ValidationException>();
     }
 }
