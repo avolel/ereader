@@ -16,6 +16,18 @@ public class EReaderDbContext(DbContextOptions<EReaderDbContext> options) : DbCo
     {
         base.OnModelCreating(modelBuilder);
 
+        modelBuilder.Entity<User>(user =>
+        {
+            user.Property(u => u.Username).IsRequired().HasMaxLength(32);
+            user.Property(u => u.PasswordHash).IsRequired();
+
+            // Uniqueness is enforced case-insensitively. EF generates a normal
+            // unique index here; the migration is hand-edited to use LOWER(username)
+            // so 'Alice' and 'alice' can't coexist without depending on the
+            // citext extension.
+            user.HasIndex(u => u.Username).IsUnique().HasDatabaseName("IX_Users_Username_Lower");
+        });
+
         modelBuilder.Entity<Book>(book =>
         {
             book.HasIndex(b => b.FileHash);

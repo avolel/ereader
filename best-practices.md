@@ -38,6 +38,8 @@ Use plural nouns for resource URLs. Avoid verbs in paths.
 - Correct: `GET /books`, `DELETE /books/{id}`
 - Wrong: `GET /getBooks`, `POST /deleteBook`
 
+**Exception — auth endpoints.** `/auth/login`, `/auth/logout`, `/auth/refresh`, `/auth/register`, and `/users/me/change-password` use action-style paths by design. They map to one-shot operations (not CRUD on a "session" resource) and the action-style form is what every JWT/OAuth client expects. New auth-flow endpoints may follow the same shape; everything outside `/auth/*` and password-change must follow the resource-naming rule.
+
 ### Pagination
 Paginate all list endpoints. Prefer cursor-based pagination; offset/limit is acceptable. Never return unbounded collections.
 
@@ -62,6 +64,11 @@ Keep controllers thin. No business logic, no direct DB access. Controllers valid
 
 ### Cancellation
 All async controller actions must accept a `CancellationToken` and pass it through to all downstream service and repository calls.
+
+### Functional Indexes
+EF Core can't model functional indexes (e.g. `LOWER(column)`) declaratively. Where we need one — currently the case-insensitive uniqueness on `Users.Username` — the index is created by raw SQL inside a hand-edited migration. The DbContext records a regular unique index with the same name so the snapshot stays consistent, but the *actual* index in Postgres is functional.
+
+This means **any future migration that touches a column with a functional index must be hand-edited**: EF will emit `DropIndex`/`CreateIndex` for a non-functional index, silently downgrading the index. After running `dotnet ef migrations add`, check the generated migration for `IX_Users_Username_Lower` (or any other index whose name ends in `_Lower`) and replace EF's `CreateIndex` call with the raw `CREATE UNIQUE INDEX ... LOWER(...)` form.
 
 ---
 
