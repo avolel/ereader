@@ -13,6 +13,11 @@ plans/
 # Dictionary data
 backend/EReader.Api/Data/*.sqlite
 
+# Local book storage — user uploads land here at runtime, never commit them.
+# Both paths are listed because the default storage root has moved over time.
+backend/data/
+backend/EReader.Api/data/
+
 # Build artefacts
 backend/**/bin/
 backend/**/obj/

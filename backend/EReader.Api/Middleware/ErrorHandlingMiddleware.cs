@@ -33,9 +33,21 @@ public sealed class ErrorHandlingMiddleware
         {
             await WriteAsync(context, StatusCodes.Status403Forbidden, ex.Code, ex.Message);
         }
+        catch (NotFoundException ex)
+        {
+            await WriteAsync(context, StatusCodes.Status404NotFound, ex.Code, ex.Message);
+        }
         catch (ConflictException ex)
         {
             await WriteAsync(context, StatusCodes.Status409Conflict, ex.Code, ex.Message);
+        }
+        catch (UnsupportedFileException ex)
+        {
+            await WriteAsync(context, StatusCodes.Status415UnsupportedMediaType, ex.Code, ex.Message);
+        }
+        catch (MalformedEpubException ex)
+        {
+            await WriteAsync(context, StatusCodes.Status422UnprocessableEntity, ex.Code, ex.Message);
         }
         catch (Exception ex)
         {
