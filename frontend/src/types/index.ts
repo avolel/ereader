@@ -69,3 +69,62 @@ export type ApiError = {
     details?: Record<string, unknown>;
   };
 };
+
+export type ChapterDetail = {
+  id: string;
+  bookId: string;
+  spineOrder: number;
+  title: string | null;
+  // Rewritten HTML with asset hrefs pointing at /api/v1/books/{id}/assets/...
+  content: string;
+  previousChapterId: string | null;
+  nextChapterId: string | null;
+};
+
+export type SearchHit = {
+  bookId: string;
+  bookTitle: string;
+  bookAuthor: string;
+  chapterId: string;
+  chapterTitle: string | null;
+  chapterSpineOrder: number;
+  // HTML with <mark> wrapping matched terms — must be sanitized at render time.
+  snippet: string;
+};
+
+export type SearchResponse = {
+  items: SearchHit[];
+  nextCursor: string | null;
+};
+
+export type ThemeMode = 'light' | 'dark' | 'system';
+
+export type ReadingSetting = {
+  // null = global default row; non-null = per-book override
+  bookId: string | null;
+  theme: ThemeMode;
+  fontFamily: string;
+  fontSize: number;
+  lineSpacing: number;
+  marginHorizontal: number;
+  marginVertical: number;
+  lastChapterId: string | null;
+  lastScrollOffset: number;
+  lastReadAt: string | null;
+  updatedAt: string;
+};
+
+// Partial: omit fields you don't want to change. Mirrors backend PATCH semantics.
+export type ReadingSettingUpdate = {
+  theme?: ThemeMode;
+  fontFamily?: string;
+  fontSize?: number;
+  lineSpacing?: number;
+  marginHorizontal?: number;
+  marginVertical?: number;
+};
+
+export type ReadingPositionUpdate = {
+  chapterId: string;
+  scrollOffset: number;
+};

@@ -1,0 +1,85 @@
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from 'react';
+
+import { useThemeContext } from '../providers/ThemeProvider';
+import { buildChapterDocument } from '../lib/webviewScripts';
+
+export type ReaderWebViewHandle = {
+  scrollTo: (y: number) => void;
+};
+
+export type ReaderWebViewMessage =
+  | { type: 'scroll'; scrollY: number }
+  | { type: 'ready'; height: number };
+
+type Props = {
+  chapterHtml: string;
+  assetsBaseUrl: string;
+  initialScrollY?: number;
+  language?: string | null;
+  onMessage: (msg: ReaderWebViewMessage) => void;
+};
+
+// Web shim: an iframe driven by srcdoc. window.parent.postMessage carries the
+// bridge payloads that ReactNativeWebView uses on native. The cover endpoint
+// is auth-gated, but chapter assets are served from the same origin so the
+// browser sends the cookie / nothing-special as the iframe loads them.
+//
+// Caveat: srcdoc iframes have no fetch credentials in some browsers' privacy
+// modes — if a downstream EPUB references cross-origin assets we'd need to
+// proxy them through the API. For now everything is same-origin so the iframe
+// can pull /api/v1/books/{id}/assets/... directly.
+const ReaderWebView = forwardRef<ReaderWebViewHandle, Props>(function ReaderWebView(
+  { chapterHtml, initialScrollY, language, onMessage },
+  ref,
+) {
+  const { globalSetting, theme } = useThemeContext();
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
+
+  useImperativeHandle(ref, () => ({
+    scrollTo: (y: number) => {
+      const win = iframeRef.current?.contentWindow;
+      win?.scrollTo(0, Number(y) || 0);
+    },
+  }));
+
+  const srcDoc = useMemo(
+    () =>
+      buildChapterDocument({
+        chapterHtml,
+        setting: globalSetting,
+        webviewColors: theme.colors.webview,
+        resolvedMode: theme.resolvedMode,
+        language,
+        initialScrollY,
+      }),
+    [chapterHtml, globalSetting, theme.colors.webview, theme.resolvedMode, language, initialScrollY],
+  );
+
+  useEffect(() => {
+    function handle(event: MessageEvent) {
+      // postMessage from the iframe arrives with source === iframe.contentWindow.
+      if (event.source !== iframeRef.current?.contentWindow) return;
+      const data = event.data;
+      if (!data || typeof data !== 'object') return;
+      onMessage(data as ReaderWebViewMessage);
+    }
+    window.addEventListener('message', handle);
+    return () => window.removeEventListener('message', handle);
+  }, [onMessage]);
+
+  return (
+    <iframe
+      ref={iframeRef}
+      srcDoc={srcDoc}
+      title="Chapter content"
+      style={{
+        width: '100%',
+        height: '100%',
+        border: 0,
+        background: theme.colors.webview.background,
+      }}
+    />
+  );
+});
+
+export default ReaderWebView;
