@@ -11,6 +11,15 @@ public class ReadingSetting
     public decimal LineSpacing { get; set; } = 1.5m;
     public int MarginHorizontal { get; set; } = 40;
     public int MarginVertical { get; set; } = 20;
+
+    // Reading position. Only meaningful on per-book rows (BookId != null); on the
+    // global default row these stay null. No FK on LastChapterId — chapters get
+    // regenerated on EPUB re-import, so we'd lose the position if we cascaded.
+    // The client resolves a missing chapter by falling back to the first chapter.
+    public Guid? LastChapterId { get; set; }
+    public int LastScrollOffset { get; set; }
+    public DateTime? LastReadAt { get; set; }
+
     public DateTime UpdatedAt { get; set; }
 
     public User User { get; set; } = null!;

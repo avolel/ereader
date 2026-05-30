@@ -1,4 +1,4 @@
-import { BookDetail, BookListParams, BookListResponse } from '../types';
+import { BookDetail, BookListParams, BookListResponse, ChapterDetail } from '../types';
 import { api } from './api';
 
 export async function listBooks(
@@ -10,6 +10,16 @@ export async function listBooks(
 
 export async function getBook(bookId: string): Promise<BookDetail> {
   const { data } = await api.get<BookDetail>(`/api/v1/books/${bookId}`);
+  return data;
+}
+
+export async function getChapter(
+  bookId: string,
+  chapterId: string,
+): Promise<ChapterDetail> {
+  const { data } = await api.get<ChapterDetail>(
+    `/api/v1/books/${bookId}/chapters/${chapterId}`,
+  );
   return data;
 }
 
