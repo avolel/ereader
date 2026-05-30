@@ -86,6 +86,8 @@ builder.Services.AddTransient<IEpubAssetReader, ZipEpubAssetReader>();
 builder.Services.AddScoped<IBookRepository, BookRepository>();
 builder.Services.AddScoped<IBookService, BookService>();
 builder.Services.AddScoped<IBookIngestionService, BookIngestionService>();
+builder.Services.AddScoped<ISearchRepository, SearchRepository>();
+builder.Services.AddScoped<ISearchService, SearchService>();
 
 var app = builder.Build();
 

@@ -4,7 +4,17 @@ namespace EReader.Core.Interfaces;
 
 public interface IBookService
 {
-    Task<BookListPage> ListAsync(Guid userId, string? cursor, int pageSize, CancellationToken ct);
+    // sortKey/sortDir/filter are taken from the request; cursor is opaque and encodes
+    // the keyset position only. If a cursor is supplied with a different sort than was
+    // used to mint it, the service rejects the request — see BookService for details.
+    Task<BookListPage> ListAsync(
+        Guid userId,
+        BookSortKey sortKey,
+        SortDirection sortDir,
+        BookListFilter filter,
+        string? cursor,
+        int pageSize,
+        CancellationToken ct);
 
     Task<BookWithChapters> GetByIdAsync(Guid bookId, Guid userId, CancellationToken ct);
 
