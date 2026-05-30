@@ -43,7 +43,7 @@ export async function deleteBook(bookId: string): Promise<void> {
 // sent on plain <img src=...> requests — so for now we ask the backend to
 // gate covers by the same userId and rely on the *path* not being guessable.
 // TODO(phase-3): switch to signed cover URLs or fetch as a blob with auth.
-const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:5214';
+const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:5000';
 
 export function absoluteCoverUrl(coverUrl: string | null | undefined): string | null {
   if (!coverUrl) return null;
