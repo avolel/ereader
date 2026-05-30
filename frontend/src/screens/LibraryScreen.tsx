@@ -1,4 +1,5 @@
 import * as DocumentPicker from 'expo-document-picker';
+import { useRouter } from 'expo-router';
 import { useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -35,6 +36,7 @@ const SORT_OPTIONS: SortOption[] = [
 
 export default function LibraryScreen() {
   const theme = useTheme();
+  const router = useRouter();
   const { logout, user } = useAuth();
   const { width } = useWindowDimensions();
   const [sortIndex, setSortIndex] = useState(0);
@@ -98,6 +100,13 @@ export default function LibraryScreen() {
       <View style={[styles.header, { borderBottomColor: theme.colors.border }]}>
         <Text style={[styles.title, { color: theme.colors.text }]}>Library</Text>
         <View style={styles.headerRight}>
+          <Pressable
+            onPress={() => router.push('/(authed)/search')}
+            accessibilityLabel="Search library"
+            style={{ marginRight: 16 }}
+          >
+            <Text style={{ color: theme.colors.accent }}>Search</Text>
+          </Pressable>
           {user && <Text style={{ color: theme.colors.textMuted, marginRight: 12 }}>{user.username}</Text>}
           <Pressable onPress={() => void logout()}>
             <Text style={{ color: theme.colors.accent }}>Sign out</Text>
@@ -185,7 +194,16 @@ export default function LibraryScreen() {
             ) : null
           }
           renderItem={({ item }) => (
-            <BookCard book={item} width={coverWidth} />
+            <BookCard
+              book={item}
+              width={coverWidth}
+              onPress={() =>
+                router.push({
+                  pathname: '/(authed)/reader/[bookId]',
+                  params: { bookId: item.id },
+                })
+              }
+            />
           )}
         />
       )}
@@ -208,13 +226,16 @@ export default function LibraryScreen() {
   );
 }
 
-type BookCardProps = { book: BookSummary; width: number };
-function BookCard({ book, width }: BookCardProps) {
+type BookCardProps = { book: BookSummary; width: number; onPress: () => void };
+function BookCard({ book, width, onPress }: BookCardProps) {
   const theme = useTheme();
   const coverHeight = width / COVER_ASPECT;
-  // TODO(PR-2): wrap in Link href={`/reader/${book.id}`} once reader exists.
   return (
-    <View style={{ width }}>
+    <Pressable
+      onPress={onPress}
+      accessibilityLabel={`Open ${book.title}`}
+      style={({ pressed }) => [{ width, opacity: pressed ? 0.85 : 1 }]}
+    >
       <AuthImage
         url={absoluteCoverUrl(book.coverUrl)}
         style={{ width, height: coverHeight, borderRadius: 4, backgroundColor: theme.colors.surface }}
@@ -232,7 +253,7 @@ function BookCard({ book, width }: BookCardProps) {
       <Text style={[styles.bookAuthor, { color: theme.colors.textMuted }]} numberOfLines={1}>
         {book.author}
       </Text>
-    </View>
+    </Pressable>
   );
 }
 

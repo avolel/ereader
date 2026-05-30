@@ -88,6 +88,8 @@ builder.Services.AddScoped<IBookService, BookService>();
 builder.Services.AddScoped<IBookIngestionService, BookIngestionService>();
 builder.Services.AddScoped<ISearchRepository, SearchRepository>();
 builder.Services.AddScoped<ISearchService, SearchService>();
+builder.Services.AddScoped<IReadingSettingsRepository, ReadingSettingsRepository>();
+builder.Services.AddScoped<IReadingSettingsService, ReadingSettingsService>();
 
 // Dev-only CORS so the Expo web dev server (localhost:8081 by default) can hit the API.
 // Production CORS is intentionally not configured here — set per-environment when we ship.
