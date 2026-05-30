@@ -1,4 +1,5 @@
 using EReader.Api.Dtos;
+using EReader.Core.Books;
 using EReader.Core.Exceptions;
 using EReader.Core.Interfaces;
 using EReader.Core.Models;
@@ -57,12 +58,19 @@ public sealed class BooksController : ControllerBase
     public async Task<ActionResult<BookListResponse>> List(
         [FromQuery] string? cursor,
         [FromQuery] int? pageSize,
+        [FromQuery] string? sort,
+        [FromQuery] string? dir,
+        [FromQuery] string? author,
+        [FromQuery] string? language,
         CancellationToken ct)
     {
         var userId = _currentUser.GetCurrentUserId();
         var size = NormalizePageSize(pageSize);
+        var sortKey = ParseSort(sort);
+        var sortDir = ParseDirection(dir, sortKey);
+        var filter = new BookListFilter(author, language);
 
-        var page = await _books.ListAsync(userId, cursor, size, ct);
+        var page = await _books.ListAsync(userId, sortKey, sortDir, filter, cursor, size, ct);
         var items = page.Items
             .Select(b => BookSummary.From(b, BuildCoverUrl(b)))
             .ToList();
@@ -132,4 +140,22 @@ public sealed class BooksController : ControllerBase
         if (requested is null || requested < 1) return DefaultPageSize;
         return requested.Value > MaxPageSize ? MaxPageSize : requested.Value;
     }
+
+    private static BookSortKey ParseSort(string? raw) => raw?.ToLowerInvariant() switch
+    {
+        null or "" or "importedat" => BookSortKey.ImportedAt,
+        "title" => BookSortKey.Title,
+        "author" => BookSortKey.Author,
+        _ => throw new ValidationException("sort must be one of: importedAt, title, author."),
+    };
+
+    // ImportedAt defaults to desc (newest first); title/author default to asc (A→Z).
+    private static SortDirection ParseDirection(string? raw, BookSortKey sortKey) =>
+        raw?.ToLowerInvariant() switch
+        {
+            "asc" => SortDirection.Asc,
+            "desc" => SortDirection.Desc,
+            null or "" => sortKey == BookSortKey.ImportedAt ? SortDirection.Desc : SortDirection.Asc,
+            _ => throw new ValidationException("dir must be asc or desc."),
+        };
 }

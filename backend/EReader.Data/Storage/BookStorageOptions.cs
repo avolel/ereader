@@ -8,8 +8,10 @@ public sealed class BookStorageOptions
     // Resolved to an absolute path at startup. Each book lives at
     // {BookFilesRoot}/{bookId}/source.epub (+ optional cover.{ext}).
     //
-    // Default points one level above the API project (../data/books → backend/data/books)
-    // so user uploads land *outside* EReader.Api/ and can't get accidentally git-add-ed.
-    // Both that path and the legacy EReader.Api/data/ are gitignored as a safety net.
-    public string BookFilesRoot { get; set; } = "../data/books";
+    // Defaults to the current user's home directory ($HOME/data/books) so uploads
+    // land outside the repo and the path is portable across machines/users.
+    public string BookFilesRoot { get; set; } = Path.Combine(
+    Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+    "data",
+    "books");
 }

@@ -5,6 +5,7 @@ using EReader.Core.Models;
 using EReader.Core.Services;
 using FluentAssertions;
 using Moq;
+using System.Collections.Generic;
 
 namespace EReader.Tests.Services;
 
@@ -225,14 +226,16 @@ public class BookServiceTests
     [Fact]
     public void Should_RoundTripCursor_When_EncodingAndDecoding()
     {
-        var when = new DateTime(2026, 5, 26, 14, 30, 0, DateTimeKind.Utc);
-        var id = Guid.NewGuid();
+        var original = new BookListCursor(
+            BookSortKey.Title,
+            SortDirection.Asc,
+            "Hello: World",  // a literal colon in the value — used to break the old format
+            Guid.NewGuid());
 
-        var encoded = BookService.EncodeCursor(when, id);
-        var (decodedTime, decodedId) = BookService.DecodeCursor(encoded);
+        var encoded = BookService.EncodeCursor(original);
+        var decoded = BookService.DecodeCursor(encoded);
 
-        decodedTime.Should().Be(when);
-        decodedId.Should().Be(id);
+        decoded.Should().Be(original);
     }
 
     [Fact]
@@ -246,11 +249,105 @@ public class BookServiceTests
     [Fact]
     public void Should_ThrowValidation_When_DecodingStructurallyInvalidCursor()
     {
-        // Valid base64 but the decoded payload doesn't split into "ticks:guid".
+        // Valid base64 but the decoded payload isn't a valid CursorPayload JSON.
         var bogus = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes("not-a-cursor"));
 
         var act = () => BookService.DecodeCursor(bogus);
 
         act.Should().Throw<ValidationException>();
+    }
+
+    [Fact]
+    public void Should_ReturnNull_When_DecodingNullOrEmptyCursor()
+    {
+        BookService.DecodeCursor(null).Should().BeNull();
+        BookService.DecodeCursor(string.Empty).Should().BeNull();
+        BookService.DecodeCursor("   ").Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Should_RejectRequest_When_CursorWasIssuedForADifferentSort()
+    {
+        // Mint a cursor against Title/Asc, then send it with ImportedAt/Desc.
+        // The service must refuse — silently swapping sorts mid-paginate would produce
+        // overlapping or missing rows.
+        var cursor = BookService.EncodeCursor(new BookListCursor(
+            BookSortKey.Title, SortDirection.Asc, "A", Guid.NewGuid()));
+
+        var service = BuildService();
+
+        var act = async () => await service.ListAsync(
+            Guid.NewGuid(),
+            BookSortKey.ImportedAt,
+            SortDirection.Desc,
+            new BookListFilter(null, null),
+            cursor,
+            20,
+            CancellationToken.None);
+
+        await act.Should().ThrowAsync<ValidationException>();
+    }
+
+    [Fact]
+    public async Task Should_EmitNextCursor_When_RepoSignalsHasMore()
+    {
+        var userId = Guid.NewGuid();
+        var lastBook = BuildBook(Guid.NewGuid(), userId);
+        lastBook.Title = "Zebra";
+
+        _books.Setup(r => r.ListAsync(
+                userId,
+                BookSortKey.Title,
+                SortDirection.Asc,
+                It.IsAny<BookListFilter>(),
+                null,
+                20,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(((IReadOnlyList<Book>)new[] { lastBook }, true));
+
+        var service = BuildService();
+
+        var page = await service.ListAsync(
+            userId,
+            BookSortKey.Title,
+            SortDirection.Asc,
+            new BookListFilter(null, null),
+            cursor: null,
+            pageSize: 20,
+            CancellationToken.None);
+
+        page.NextCursor.Should().NotBeNull();
+        // Round-tripping the emitted cursor must yield the last book's keyset position.
+        var decoded = BookService.DecodeCursor(page.NextCursor);
+        decoded.Should().Be(new BookListCursor(
+            BookSortKey.Title, SortDirection.Asc, "Zebra", lastBook.Id));
+    }
+
+    [Fact]
+    public async Task Should_EmitNoCursor_When_RepoSignalsNoMore()
+    {
+        var userId = Guid.NewGuid();
+        _books.Setup(r => r.ListAsync(
+                userId,
+                It.IsAny<BookSortKey>(),
+                It.IsAny<SortDirection>(),
+                It.IsAny<BookListFilter>(),
+                It.IsAny<BookListCursor?>(),
+                It.IsAny<int>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(((IReadOnlyList<Book>)new[] { BuildBook(Guid.NewGuid(), userId) }, false));
+
+        var service = BuildService();
+
+        var page = await service.ListAsync(
+            userId,
+            BookSortKey.ImportedAt,
+            SortDirection.Desc,
+            new BookListFilter(null, null),
+            cursor: null,
+            pageSize: 20,
+            CancellationToken.None);
+
+        page.NextCursor.Should().BeNull();
     }
 }

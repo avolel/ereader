@@ -1,3 +1,6 @@
+using System.Globalization;
+using EReader.Core.Books;
+using EReader.Core.Exceptions;
 using EReader.Core.Interfaces;
 using EReader.Core.Models;
 using Microsoft.EntityFrameworkCore;
@@ -47,33 +50,33 @@ public sealed class BookRepository : IBookRepository
 
     public async Task<(IReadOnlyList<Book> Items, bool HasMore)> ListAsync(
         Guid userId,
-        DateTime? cursorImportedAt,
-        Guid? cursorBookId,
+        BookSortKey sortKey,
+        SortDirection sortDir,
+        BookListFilter filter,
+        BookListCursor? cursor,
         int pageSize,
         CancellationToken ct)
     {
         var query = _db.Books.Where(b => b.UserId == userId);
 
-        if (cursorImportedAt is { } ts)
+        if (!string.IsNullOrWhiteSpace(filter.Author))
         {
-            // Cursor points at the last item of the previous page. ImportedAt is set
-            // from DateTime.UtcNow (~100ns precision), so ties between two ingestions
-            // are effectively impossible — a strict less-than is sufficient and stays
-            // trivially translatable to SQL.
-            query = query.Where(b => b.ImportedAt < ts);
-            if (cursorBookId is { } id)
-            {
-                // Belt-and-braces: if a tie ever did happen, exclude the cursor row
-                // explicitly so it can't repeat. This stays translatable (simple !=).
-                query = query.Where(b => b.Id != id);
-            }
+            // Substring, case-insensitive. EF.Functions.ILike translates to Postgres ILIKE.
+            // Wildcards in user input are escaped so they match literally.
+            var pattern = $"%{EscapeLike(filter.Author)}%";
+            query = query.Where(b => EF.Functions.ILike(b.Author, pattern));
         }
 
+        if (!string.IsNullOrWhiteSpace(filter.Language))
+        {
+            var lang = filter.Language;
+            query = query.Where(b => b.Language == lang);
+        }
+
+        query = ApplySortAndCursor(query, sortKey, sortDir, cursor);
+
         // Fetch pageSize+1 to know if there's a next page without a separate count.
-        var rows = await query
-            .OrderByDescending(b => b.ImportedAt)
-            .Take(pageSize + 1)
-            .ToListAsync(ct);
+        var rows = await query.Take(pageSize + 1).ToListAsync(ct);
 
         var hasMore = rows.Count > pageSize;
         if (hasMore) rows.RemoveAt(rows.Count - 1);
@@ -94,4 +97,108 @@ public sealed class BookRepository : IBookRepository
         _db.Books.Remove(book);
         await _db.SaveChangesAsync(ct);
     }
+
+    // Keyset filter (col > value) OR (col = value AND Id > id) keeps pagination
+    // deterministic when the sort column has ties. Tie-breaker is always Book.Id.
+    // One branch per (sortKey, direction) pair — verbose but trivially translatable
+    // and easy to reason about.
+    private static IQueryable<Book> ApplySortAndCursor(
+        IQueryable<Book> query,
+        BookSortKey sortKey,
+        SortDirection sortDir,
+        BookListCursor? cursor)
+    {
+        return (sortKey, sortDir) switch
+        {
+            (BookSortKey.ImportedAt, SortDirection.Desc) => ImportedAtDesc(query, cursor),
+            (BookSortKey.ImportedAt, SortDirection.Asc) => ImportedAtAsc(query, cursor),
+            (BookSortKey.Title, SortDirection.Asc) => TitleAsc(query, cursor),
+            (BookSortKey.Title, SortDirection.Desc) => TitleDesc(query, cursor),
+            (BookSortKey.Author, SortDirection.Asc) => AuthorAsc(query, cursor),
+            (BookSortKey.Author, SortDirection.Desc) => AuthorDesc(query, cursor),
+            _ => throw new ValidationException("Unknown sort key or direction."),
+        };
+    }
+
+    private static IQueryable<Book> ImportedAtDesc(IQueryable<Book> q, BookListCursor? cursor)
+    {
+        if (cursor is not null)
+        {
+            var ts = ParseTicks(cursor.SortValue);
+            var id = cursor.BookId;
+            q = q.Where(b => b.ImportedAt < ts || (b.ImportedAt == ts && b.Id < id));
+        }
+        return q.OrderByDescending(b => b.ImportedAt).ThenByDescending(b => b.Id);
+    }
+
+    private static IQueryable<Book> ImportedAtAsc(IQueryable<Book> q, BookListCursor? cursor)
+    {
+        if (cursor is not null)
+        {
+            var ts = ParseTicks(cursor.SortValue);
+            var id = cursor.BookId;
+            q = q.Where(b => b.ImportedAt > ts || (b.ImportedAt == ts && b.Id > id));
+        }
+        return q.OrderBy(b => b.ImportedAt).ThenBy(b => b.Id);
+    }
+
+    private static IQueryable<Book> TitleAsc(IQueryable<Book> q, BookListCursor? cursor)
+    {
+        if (cursor is not null)
+        {
+            var v = cursor.SortValue;
+            var id = cursor.BookId;
+            q = q.Where(b => string.Compare(b.Title, v) > 0
+                || (b.Title == v && b.Id > id));
+        }
+        return q.OrderBy(b => b.Title).ThenBy(b => b.Id);
+    }
+
+    private static IQueryable<Book> TitleDesc(IQueryable<Book> q, BookListCursor? cursor)
+    {
+        if (cursor is not null)
+        {
+            var v = cursor.SortValue;
+            var id = cursor.BookId;
+            q = q.Where(b => string.Compare(b.Title, v) < 0
+                || (b.Title == v && b.Id < id));
+        }
+        return q.OrderByDescending(b => b.Title).ThenByDescending(b => b.Id);
+    }
+
+    private static IQueryable<Book> AuthorAsc(IQueryable<Book> q, BookListCursor? cursor)
+    {
+        if (cursor is not null)
+        {
+            var v = cursor.SortValue;
+            var id = cursor.BookId;
+            q = q.Where(b => string.Compare(b.Author, v) > 0
+                || (b.Author == v && b.Id > id));
+        }
+        return q.OrderBy(b => b.Author).ThenBy(b => b.Id);
+    }
+
+    private static IQueryable<Book> AuthorDesc(IQueryable<Book> q, BookListCursor? cursor)
+    {
+        if (cursor is not null)
+        {
+            var v = cursor.SortValue;
+            var id = cursor.BookId;
+            q = q.Where(b => string.Compare(b.Author, v) < 0
+                || (b.Author == v && b.Id < id));
+        }
+        return q.OrderByDescending(b => b.Author).ThenByDescending(b => b.Id);
+    }
+
+    private static DateTime ParseTicks(string s)
+    {
+        if (!long.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out var ticks))
+        {
+            throw new ValidationException("Invalid cursor.");
+        }
+        return new DateTime(ticks, DateTimeKind.Utc);
+    }
+
+    private static string EscapeLike(string raw) =>
+        raw.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_");
 }

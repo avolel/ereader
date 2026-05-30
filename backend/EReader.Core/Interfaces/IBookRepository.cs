@@ -1,3 +1,4 @@
+using EReader.Core.Books;
 using EReader.Core.Models;
 
 namespace EReader.Core.Interfaces;
@@ -16,12 +17,15 @@ public interface IBookRepository
 
     Task<bool> ExistsByHashAsync(Guid userId, string fileHash, CancellationToken ct);
 
-    // Cursor is opaque to the caller (encoded ImportedAt + Id). pageSize+1 is fetched
-    // internally; the repo returns at most pageSize items and a flag indicating more.
+    // Keyset pagination on (sortKey, Id). Cursor is decoded into BookListCursor
+    // by the service before being passed in. Filter is independent of cursor — the
+    // service trusts the client to keep filter values stable across page requests.
     Task<(IReadOnlyList<Book> Items, bool HasMore)> ListAsync(
         Guid userId,
-        DateTime? cursorImportedAt,
-        Guid? cursorBookId,
+        BookSortKey sortKey,
+        SortDirection sortDir,
+        BookListFilter filter,
+        BookListCursor? cursor,
         int pageSize,
         CancellationToken ct);
 

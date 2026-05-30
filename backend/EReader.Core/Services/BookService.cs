@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using System.Text.Json;
 using EReader.Core.Books;
 using EReader.Core.Exceptions;
 using EReader.Core.Interfaces;
@@ -22,16 +23,35 @@ public sealed class BookService : IBookService
         _assets = assets;
     }
 
-    public async Task<BookListPage> ListAsync(Guid userId, string? cursor, int pageSize, CancellationToken ct)
+    public async Task<BookListPage> ListAsync(
+        Guid userId,
+        BookSortKey sortKey,
+        SortDirection sortDir,
+        BookListFilter filter,
+        string? cursor,
+        int pageSize,
+        CancellationToken ct)
     {
-        var (cursorImportedAt, cursorBookId) = DecodeCursor(cursor);
-        var (items, hasMore) = await _books.ListAsync(userId, cursorImportedAt, cursorBookId, pageSize, ct);
+        var decoded = DecodeCursor(cursor);
+        if (decoded is not null && (decoded.SortKey != sortKey || decoded.SortDir != sortDir))
+        {
+            // The cursor was minted against a different sort. Silently re-running with
+            // the requested sort would return overlapping/missing rows — fail loudly so
+            // the client either keeps the original sort or starts fresh without a cursor.
+            throw new ValidationException("Cursor was issued for a different sort; omit the cursor when changing sort.");
+        }
+
+        var (items, hasMore) = await _books.ListAsync(userId, sortKey, sortDir, filter, decoded, pageSize, ct);
 
         string? nextCursor = null;
         if (hasMore && items.Count > 0)
         {
             var last = items[^1];
-            nextCursor = EncodeCursor(last.ImportedAt, last.Id);
+            nextCursor = EncodeCursor(new BookListCursor(
+                sortKey,
+                sortDir,
+                ExtractSortValue(last, sortKey),
+                last.Id));
         }
         return new BookListPage(items, nextCursor);
     }
@@ -113,38 +133,62 @@ public sealed class BookService : IBookService
         _files.DeleteForBook(bookId);
     }
 
-    // Cursor format: base64url("{ImportedAt-ticks}:{book-guid}").
-    // Opaque to clients; encoding keeps them from interpreting/manipulating it.
-    internal static string EncodeCursor(DateTime importedAt, Guid bookId)
+    private static string ExtractSortValue(Models.Book b, BookSortKey key) => key switch
     {
-        var payload = $"{importedAt.Ticks.ToString(CultureInfo.InvariantCulture)}:{bookId}";
-        return Convert.ToBase64String(Encoding.UTF8.GetBytes(payload));
+        BookSortKey.Title => b.Title,
+        BookSortKey.Author => b.Author,
+        BookSortKey.ImportedAt => b.ImportedAt.Ticks.ToString(CultureInfo.InvariantCulture),
+        _ => throw new ValidationException("Unknown sort key."),
+    };
+
+    // Cursor: base64url(JSON({k,d,v,id})). JSON avoids delimiter collisions when
+    // sortValue is a title containing colons; size overhead is negligible.
+    internal static string EncodeCursor(BookListCursor cursor)
+    {
+        var payload = new CursorPayload(
+            (int)cursor.SortKey,
+            (int)cursor.SortDir,
+            cursor.SortValue,
+            cursor.BookId);
+        var json = JsonSerializer.SerializeToUtf8Bytes(payload);
+        return Convert.ToBase64String(json);
     }
 
-    internal static (DateTime? ImportedAt, Guid? BookId) DecodeCursor(string? cursor)
+    internal static BookListCursor? DecodeCursor(string? cursor)
     {
-        if (string.IsNullOrWhiteSpace(cursor)) return (null, null);
+        if (string.IsNullOrWhiteSpace(cursor)) return null;
 
         // Surface malformed cursors as a 400 rather than silently restarting from page 1.
         // A client paginating forward with a corrupt cursor would otherwise loop on page 1
         // forever and never see the bug; better to fail loudly.
         try
         {
-            var raw = Encoding.UTF8.GetString(Convert.FromBase64String(cursor));
-            var parts = raw.Split(':', 2);
-            if (parts.Length != 2) throw new ValidationException("Invalid cursor.");
-            if (!long.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out var ticks))
+            var bytes = Convert.FromBase64String(cursor);
+            var payload = JsonSerializer.Deserialize<CursorPayload>(bytes)
+                ?? throw new ValidationException("Invalid cursor.");
+            if (!Enum.IsDefined(typeof(BookSortKey), payload.K)
+                || !Enum.IsDefined(typeof(SortDirection), payload.D))
             {
                 throw new ValidationException("Invalid cursor.");
             }
-            if (!Guid.TryParse(parts[1], out var id)) throw new ValidationException("Invalid cursor.");
-            return (new DateTime(ticks, DateTimeKind.Utc), id);
+            return new BookListCursor(
+                (BookSortKey)payload.K,
+                (SortDirection)payload.D,
+                payload.V ?? string.Empty,
+                payload.Id);
         }
         catch (FormatException)
         {
             throw new ValidationException("Invalid cursor.");
         }
+        catch (JsonException)
+        {
+            throw new ValidationException("Invalid cursor.");
+        }
     }
+
+    // Field names kept terse to keep the encoded cursor short.
+    private sealed record CursorPayload(int K, int D, string? V, Guid Id);
 
     private static string ContentTypeFromExtension(string ext)
     {
