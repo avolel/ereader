@@ -1,0 +1,28 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ereader
+    restart: no
+    environment:
+      POSTGRES_USER: ereader
+      POSTGRES_PASSWORD: $DB_PASSWORD
+      POSTGRES_DB: ereader
+    ports:
+      - "5432:5432"
+    volumes:
+      - ereader_data:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+
+  redis:
+    image: redis:7-alpine
+    container_name: ereader-redis
+    restart: no
+    ports:
+      - "6379:6379"
+    volumes:
+      - ereader_redis:/data
+    command: ["redis-server", "--appendonly", "yes"]
+
+volumes:
+  ereader_data:
+  ereader_redis:

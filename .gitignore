@@ -27,6 +27,5 @@ frontend/node_modules/
 # OS
 .DS_Store
 Thumbs.db
-docker/docker-compose.yml
 backend/EReader.Api/appsettings.json
 backend/EReader.Api/appsettings.Development.json
