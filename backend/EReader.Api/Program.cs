@@ -89,12 +89,33 @@ builder.Services.AddScoped<IBookIngestionService, BookIngestionService>();
 builder.Services.AddScoped<ISearchRepository, SearchRepository>();
 builder.Services.AddScoped<ISearchService, SearchService>();
 
+// Dev-only CORS so the Expo web dev server (localhost:8081 by default) can hit the API.
+// Production CORS is intentionally not configured here — set per-environment when we ship.
+if (builder.Environment.IsDevelopment())
+{
+    builder.Services.AddCors(options =>
+    {
+        options.AddPolicy("DevFrontend", policy => policy
+            .WithOrigins(
+                "http://localhost:8081",
+                "http://localhost:19006",
+                "http://127.0.0.1:8081",
+                "http://127.0.0.1:19006")
+            .AllowAnyHeader()
+            .AllowAnyMethod()
+            .AllowCredentials());
+    });
+}
+
 var app = builder.Build();
 
 app.UseMiddleware<ErrorHandlingMiddleware>();
 
 if (app.Environment.IsDevelopment())
 {
+    // CORS must run before auth so preflight OPTIONS requests aren't rejected.
+    app.UseCors("DevFrontend");
+
     // Auto-apply pending EF migrations on startup so pulling a branch with a new
     // migration doesn't 500 the first request. Dev-only — production migrations
     // must be gated through a deliberate deployment step.
