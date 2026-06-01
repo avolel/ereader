@@ -11,6 +11,9 @@ using EReader.Data.Storage;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc.Authorization;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
+using Minio;
+using Minio.DataModel.Args;
 using StackExchange.Redis;
 
 // In Development, load .env from the project directory so DATABASE_URL is available
@@ -74,13 +77,29 @@ builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ICurrentUserService, HttpContextCurrentUserService>();
 
-// Book ingestion + reading. File store is singleton (just holds the root path,
-// no per-request state); parser/asset-reader are stateless transients.
-builder.Services
-    .AddOptions<BookStorageOptions>()
-    .Bind(builder.Configuration.GetSection(BookStorageOptions.SectionName));
+// --- MinIO object storage ---
+var minioEndpoint  = builder.Configuration["MINIO_ENDPOINT"] ?? "localhost:9000";
+var minioAccessKey = builder.Configuration["MINIO_USER"]     ?? throw new InvalidOperationException("MINIO_USER is required.");
+var minioSecretKey = builder.Configuration["MINIO_PASSWORD"] ?? throw new InvalidOperationException("MINIO_PASSWORD is required.");
+var minioBucket    = builder.Configuration["MINIO_BUCKET"]   ?? "ereader-media";
 
-builder.Services.AddSingleton<IBookFileStore, LocalBookFileStore>();
+builder.Services.Configure<MinioOptions>(o =>
+{
+    o.Endpoint = minioEndpoint;
+    o.AccessKey = minioAccessKey;
+    o.SecretKey = minioSecretKey;
+    o.Bucket = minioBucket;
+    o.UseSSL = false;
+});
+
+builder.Services.AddSingleton<IMinioClient>(_ =>
+    new MinioClient()
+        .WithEndpoint(minioEndpoint)
+        .WithCredentials(minioAccessKey, minioSecretKey)
+        .WithSSL(false)
+        .Build());
+
+builder.Services.AddSingleton<IBookFileStore, MinioBookFileStore>();
 builder.Services.AddTransient<IEpubParser, EpubParserAdapter>();
 builder.Services.AddTransient<IEpubAssetReader, ZipEpubAssetReader>();
 builder.Services.AddScoped<IBookRepository, BookRepository>();
@@ -125,6 +144,13 @@ if (app.Environment.IsDevelopment())
     {
         var db = scope.ServiceProvider.GetRequiredService<EReaderDbContext>();
         await db.Database.MigrateAsync();
+        
+        var minio = scope.ServiceProvider.GetRequiredService<IMinioClient>();
+        var bucket = scope.ServiceProvider.GetRequiredService<IOptions<MinioOptions>>().Value.Bucket;
+        if (!await minio.BucketExistsAsync(new BucketExistsArgs().WithBucket(bucket)))
+        {
+            await minio.MakeBucketAsync(new MakeBucketArgs().WithBucket(bucket));
+        }
     }
 
     app.UseSwagger();

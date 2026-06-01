@@ -51,16 +51,20 @@ public sealed class BookIngestionService : IBookIngestionService
         var bookId = Guid.NewGuid();
 
         buffered.Position = 0;
-        var savedPath = await _files.SaveSourceAsync(bookId, buffered, ct);
+        var savedKey = await _files.SaveSourceAsync(bookId, buffered, ct);
 
         try
         {
-            var parsed = await _parser.ParseAsync(savedPath, ct);
+            // VersOne's EpubReader disposes the stream it's given, so hand it an
+            // isolated copy and keep `buffered` under this method's sole ownership.
+            buffered.Position = 0;
+            using var parseStream = new MemoryStream(buffered.ToArray());
+            var parsed = await _parser.ParseAsync(parseStream, ct);
 
-            string? coverPath = null;
+            string? coverKey = null;
             if (parsed.Cover is { } cover)
             {
-                coverPath = await _files.SaveCoverAsync(bookId, cover.Bytes, cover.FileExtension, ct);
+                coverKey = await _files.SaveCoverAsync(bookId, cover.Bytes, cover.FileExtension, ct);
             }
 
             var book = new Book
@@ -74,10 +78,10 @@ public sealed class BookIngestionService : IBookIngestionService
                 PublishedDate = parsed.PublishedDate,
                 PublishedYear = parsed.PublishedYear,
                 Description = parsed.Description,
-                FilePath = savedPath,
+                FilePath = savedKey,
                 FileHash = fileHash,
                 FileSize = buffered.Length,
-                CoverImagePath = coverPath,
+                CoverImagePath = coverKey,
                 ImportedAt = DateTime.UtcNow,
             };
 
@@ -96,11 +100,7 @@ public sealed class BookIngestionService : IBookIngestionService
         }
         catch
         {
-            // Persisting to disk happened before we knew the parse/save would
-            // succeed. If anything downstream blows up, clean the orphaned files
-            // so we don't leak storage. The DB row was never inserted (AddAsync
-            // is the last step), so there's nothing else to roll back.
-            _files.DeleteForBook(bookId);
+            await _files.DeleteForBookAsync(bookId, ct);
             throw;
         }
     }

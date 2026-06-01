@@ -9,44 +9,24 @@ namespace EReader.Data.Parsing;
 // — disposing it disposes the archive too, so callers must dispose the stream.
 public sealed class ZipEpubAssetReader : IEpubAssetReader
 {
-    public BookAsset? OpenAsset(string epubPath, string assetPath)
+    public BookAsset? OpenAsset(Stream epubStream, string assetPath)
     {
         if (string.IsNullOrWhiteSpace(assetPath)) return null;
-
-        // Normalize: strip leading slash + back-slashes (EPUB internal paths
-        // are forward-slash, but a careless client might send either form).
         var normalized = assetPath.Replace('\\', '/').TrimStart('/');
 
-        // ZipFile.OpenRead opens with FileShare.Read so concurrent asset reads
-        // for the same book are fine.
-        var archive = ZipFile.OpenRead(epubPath);
+        var archive = new ZipArchive(epubStream, ZipArchiveMode.Read, leaveOpen: false);
         try
         {
-            // Case-insensitive lookup: EPUBs vary, and some manifest paths
-            // differ in case from the zip entry names.
             var entry = archive.Entries.FirstOrDefault(e =>
                 string.Equals(e.FullName, normalized, StringComparison.OrdinalIgnoreCase));
-
-            if (entry is null)
-            {
-                archive.Dispose();
-                return null;
-            }
+            if (entry is null) { archive.Dispose(); return null; }
 
             var entryStream = entry.Open();
-            // Wrap so disposing the returned stream tears down the archive too.
-            var owning = new ArchiveOwningStream(entryStream, archive);
-            return new BookAsset(
-                Content: owning,
-                ContentType: ContentTypeFor(entry.FullName),
-                Length: entry.Length,
-                FileName: Path.GetFileName(entry.FullName));
+            var owning = new ArchiveOwningStream(entryStream, archive); // archive owns epubStream via leaveOpen:false
+            return new BookAsset(owning, ContentTypeFor(entry.FullName), entry.Length,
+                                Path.GetFileName(entry.FullName));
         }
-        catch
-        {
-            archive.Dispose();
-            throw;
-        }
+        catch { archive.Dispose(); throw; }
     }
 
     private static string ContentTypeFor(string path)

@@ -96,13 +96,12 @@ public sealed class BookService : IBookService
         var book = await _books.GetByIdAsync(bookId, userId, ct)
             ?? throw new NotFoundException("Book not found.");
 
-        if (string.IsNullOrWhiteSpace(book.FilePath) || !_files.Exists(book.FilePath))
-        {
+        if (string.IsNullOrWhiteSpace(book.FilePath) || !await _files.ExistsAsync(book.FilePath, ct))
             throw new NotFoundException("Book source file is missing.");
-        }
 
-        var asset = _assets.OpenAsset(book.FilePath, assetPath)
-            ?? throw new NotFoundException("Asset not found.");
+        var source = await _files.OpenReadAsync(book.FilePath, ct);
+        var asset = _assets.OpenAsset(source, assetPath);   // takes ownership of `source`
+        if (asset is null) { source.Dispose(); throw new NotFoundException("Asset not found."); }
         return asset;
     }
 
@@ -111,26 +110,21 @@ public sealed class BookService : IBookService
         var book = await _books.GetByIdAsync(bookId, userId, ct)
             ?? throw new NotFoundException("Book not found.");
 
-        if (string.IsNullOrWhiteSpace(book.CoverImagePath) || !_files.Exists(book.CoverImagePath))
-        {
+        if (string.IsNullOrWhiteSpace(book.CoverImagePath) || !await _files.ExistsAsync(book.CoverImagePath, ct))
             throw new NotFoundException("Cover not found.");
-        }
 
-        var stream = _files.OpenRead(book.CoverImagePath);
+        var stream = await _files.OpenReadAsync(book.CoverImagePath, ct);
         var contentType = ContentTypeFromExtension(Path.GetExtension(book.CoverImagePath));
-        var fileName = Path.GetFileName(book.CoverImagePath);
+        var fileName = Path.GetFileName(book.CoverImagePath); // still works on an object key
         return new BookAsset(stream, contentType, stream.Length, fileName);
     }
 
     public async Task DeleteAsync(Guid bookId, Guid userId, CancellationToken ct)
     {
         var book = await _books.GetByIdAsync(bookId, userId, ct)
-            // 404 (not 403) when the book exists for a different user — the plan
-            // calls this out: standard "don't leak existence" pattern.
             ?? throw new NotFoundException("Book not found.");
-
         await _books.RemoveAsync(book, ct);
-        _files.DeleteForBook(bookId);
+        await _files.DeleteForBookAsync(bookId, ct); // was: _files.DeleteForBook(bookId)
     }
 
     private static string ExtractSortValue(Models.Book b, BookSortKey key) => key switch

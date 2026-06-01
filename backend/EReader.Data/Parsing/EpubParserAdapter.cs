@@ -9,12 +9,12 @@ namespace EReader.Data.Parsing;
 
 public sealed partial class EpubParserAdapter : IEpubParser
 {
-    public async Task<ParsedEpub> ParseAsync(string epubPath, CancellationToken ct)
+    public async Task<ParsedEpub> ParseAsync(Stream epubStream, CancellationToken ct)
     {
         EpubBook book;
         try
         {
-            book = await EpubReader.ReadBookAsync(epubPath);
+            book = await EpubReader.ReadBookAsync(epubStream);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
