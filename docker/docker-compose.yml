@@ -23,6 +23,20 @@ services:
       - ereader_redis:/data
     command: ["redis-server", "--appendonly", "yes"]
 
+  ereader-minio:
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    restart: no
+    environment:
+      MINIO_ROOT_USER: ${MINIO_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD}
+    ports:
+      - "9000:9000"
+      - "9001:9001"   # Admin UI at http://localhost:9001
+    volumes:
+      - ereader_minio_data:/data
+
 volumes:
   ereader_data:
   ereader_redis:
+  ereader_minio_data:
