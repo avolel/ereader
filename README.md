@@ -43,7 +43,8 @@ engineer can get productive and maintain the project without a hand-off.
 
 EReader is a three-tier system. The frontend talks to the backend over HTTPS/JSON;
 the backend persists relational data in PostgreSQL, refresh tokens in Redis, and
-the raw uploaded EPUB bytes + extracted covers on the local filesystem.
+the raw uploaded EPUB bytes + extracted covers in MinIO (S3-compatible object
+storage).
 
 ```
 ┌──────────────────────┐   HTTPS / JSON    ┌────────────────────────────┐
@@ -55,9 +56,9 @@ the raw uploaded EPUB bytes + extracted covers on the local filesystem.
                                           ┌─────────────┼─────────────┐
                                           ▼             ▼             ▼
                                   ┌──────────────┐ ┌─────────┐ ┌────────────────┐
-                                  │ PostgreSQL   │ │  Redis  │ │ Local FS store │
-                                  │ (EF Core 10) │ │ refresh │ │ ../data/books/ │
-                                  │ + tsvector   │ │ tokens  │ │   {bookId}/    │
+                                  │ PostgreSQL   │ │  Redis  │ │ MinIO (S3 API) │
+                                  │ (EF Core 10) │ │ refresh │ │ object storage │
+                                  │ + tsvector   │ │ tokens  │ │  {bookId}/...  │
                                   │   full-text  │ └─────────┘ └────────────────┘
                                   └──────────────┘
 ```
@@ -68,7 +69,7 @@ the raw uploaded EPUB bytes + extracted covers on the local filesystem.
 |---|---|---|
 | **`EReader.Api`** | HTTP boundary: controllers, DTOs, middleware, `Program.cs` composition root, ASP.NET auth integration. | `Core` + `Data` |
 | **`EReader.Core`** | Pure domain: models, **service interfaces**, business logic in `Services/`, domain exceptions. **No I/O, no HTTP, no EF.** | BCL only |
-| **`EReader.Data`** | Adapters that implement `Core`'s interfaces: EF `DbContext`, repositories, EPUB parser, BCrypt hasher, JWT issuer, Redis store, local file store. | `Core` |
+| **`EReader.Data`** | Adapters that implement `Core`'s interfaces: EF `DbContext`, repositories, EPUB parser, BCrypt hasher, JWT issuer, Redis store, MinIO object store. | `Core` |
 
 The rule — `Core` defines *interfaces*, `Data` provides *implementations*, `Api`
 wires them together via DI — is what lets the entire service layer be unit-tested
@@ -92,6 +93,7 @@ the iOS/Android paths are wired but not the primary focus.
 | ORM | EF Core 10 (`Npgsql` provider) | Code-first migrations |
 | Database | PostgreSQL 16 | Includes a `tsvector` generated column + GIN index for full-text search |
 | Token store | Redis 7 | Opaque refresh tokens, hashed; family-based rotation |
+| Object storage | MinIO (S3-compatible) | Source EPUBs + extracted covers, keyed `{bookId}/...`; via `Minio` .NET client |
 | Password hashing | BCrypt.Net | Work factor 12 |
 | EPUB parsing | VersOne.Epub | Wrapped behind `IEpubParser` |
 | Frontend | Expo SDK 56, React 19, React Native 0.85, React Native Web | `expo-router` for routing |
@@ -136,7 +138,7 @@ ereader/
 │   │   ├── Migrations/               ← EF Core migrations + model snapshot
 │   │   ├── Parsing/                  ← EpubParserAdapter, ZipEpubAssetReader
 │   │   ├── Repositories/             ← User, Book, Search, ReadingSettings
-│   │   ├── Storage/                  ← LocalBookFileStore, BookStorageOptions
+│   │   ├── Storage/                  ← MinioBookFileStore, MinioOptions
 │   │   ├── EReaderDbContext.cs
 │   │   └── DesignTimeDbContextFactory.cs   ← used only by `dotnet ef` tooling
 │   └── EReader.Tests/               ← xUnit + FluentAssertions + Moq + EF InMemory
@@ -152,9 +154,9 @@ ereader/
 │   │       └── reader/[bookId].tsx
 │   └── src/
 │       ├── components/               ← AuthImage, TableOfContents, SettingsDrawer,
-│       │                               ReaderWebView(.web).tsx
+│       │                               ConfirmDialog, ReaderWebView(.web).tsx
 │       ├── hooks/                    ← useBooks, useBook, useChapter, useSearch,
-│       │                               useUploadBook, useReadingSettings
+│       │                               useUploadBook, useDeleteBook, useReadingSettings
 │       ├── providers/                ← QueryProvider, AuthProvider, ThemeProvider
 │       ├── screens/                  ← Library, Reader, Search, Login, Register
 │       ├── services/                 ← api (axios), auth, books, search,
@@ -163,7 +165,8 @@ ereader/
 │       ├── lib/webviewScripts.ts     ← injected JS for the reader WebView
 │       └── types/index.ts            ← shared types mirroring backend DTOs
 ├── docker/
-│   ├── docker-compose.yml            ← PostgreSQL 16 + Redis 7
+│   ├── docker-compose.yml            ← PostgreSQL 16 + Redis 7 + MinIO
+│   ├── .env.example                  ← compose vars: DB_PASSWORD + MINIO_*
 │   └── postgres/init.sql             ← ensures DB exists; EF owns the schema
 ├── docs/
 │   ├── CODE_OVERVIEW.md              ← deep backend walk-through (canonical internals doc)
@@ -189,30 +192,30 @@ ereader/
 | Docker + Compose v2 | latest |
 | PostgreSQL client (`psql`) | 16+ (optional, for poking the DB) |
 
-### Step 1 — start Postgres + Redis
+### Step 1 — start Postgres, Redis + MinIO
 
-The compose file lives under `docker/`. The Postgres password comes from
-`$DB_PASSWORD`, which Compose substitutes when you run `up`. This project keeps
-that value in the **backend's `.env`** (`backend/EReader.Api/.env` — the same file
-as `DATABASE_URL`, created in Step 2), so there's a single secrets file and the
-two passwords must match.
-
-Compose resolves `$DB_PASSWORD` from *its* environment — an exported shell
-variable, the `.env` in the directory you invoke it from, or an explicit
-`--env-file`. There is **no** `docker/.env`; the backend file is the source. Point
-Compose at it (this is the reliable, machine-independent form):
+The compose file lives under `docker/` and runs three services: Postgres, Redis,
+and MinIO. It substitutes `$DB_PASSWORD`, `$MINIO_USER`, and `$MINIO_PASSWORD` at
+`up` time. These live in **`docker/.env`** (copied from `docker/.env.example`),
+which is the source of truth for the *container stack*:
 
 ```bash
-# Reads DB_PASSWORD from the backend .env (other keys in the file are ignored):
-docker compose --env-file backend/EReader.Api/.env -f docker/docker-compose.yml up -d
-
-# Equivalent if you'd rather not pass --env-file: export the var first, then
-#   docker compose -f docker/docker-compose.yml up -d
-export DB_PASSWORD=ereader_dev
+cp docker/.env.example docker/.env      # then edit the passwords
+# Compose auto-loads docker/.env because it sits next to the project it runs:
+docker compose --env-file docker/.env -f docker/docker-compose.yml up -d
 ```
 
-> If you bring the volume up once with the wrong/empty `DB_PASSWORD`, Postgres
-> bakes that password into the data volume on first init. Changing it later means
+`docker/.env` carries:
+
+| Var | Used by | Meaning |
+|---|---|---|
+| `DB_PASSWORD` | Postgres container | Postgres superuser password. Must match the `Password=` in the backend's `DATABASE_URL` (Step 2). |
+| `MINIO_USER` / `MINIO_PASSWORD` | MinIO container **and** the API | MinIO root credentials. The API reads the *same* values as its access/secret key. |
+| `MINIO_BUCKET` | API | Bucket name (default `ereader-media`); auto-created on boot. |
+| `MINIO_ENDPOINT` | API | `host:port`, **no scheme** (default `localhost:9000`). |
+
+> If you bring the Postgres volume up once with the wrong/empty `DB_PASSWORD`,
+> Postgres bakes it into the data volume on first init. Changing it later means
 > `docker compose ... down -v` to drop the volume and re-init (see §11).
 
 Verify Postgres is reachable:
@@ -221,31 +224,39 @@ Verify Postgres is reachable:
 psql -h localhost -U ereader -d ereader -c "\conninfo"
 ```
 
-Services exposed: PostgreSQL on `localhost:5432`, Redis on `localhost:6379`.
+Services exposed: PostgreSQL on `localhost:5432`, Redis on `localhost:6379`, MinIO
+S3 API on `localhost:9000`, MinIO console UI on `http://localhost:9001`.
 
 ### Step 2 — configure the backend
 
 Copy the template and fill in real values:
 
 ```bash
-cp .env.example backend/EReader.Api/.env
+cp backend/EReader.Api/.env.example backend/EReader.Api/.env
 ```
 
-The backend `.env` needs:
+The backend `.env` ships these keys:
 
 | Var | Meaning |
 |---|---|
-| `DATABASE_URL` | Npgsql connection string. Its `Password=` must equal `DB_PASSWORD` below. e.g. `Host=localhost;Port=5432;Database=ereader;Username=ereader;Password=ereader_dev` |
-| `DB_PASSWORD` | Postgres password for docker-compose (Step 1). Same value as the `Password=` in `DATABASE_URL`. Not read by the backend itself. |
+| `DATABASE_URL` | Npgsql connection string. Its `Password=` must equal `DB_PASSWORD` in `docker/.env`. e.g. `Host=localhost;Port=5432;Database=ereader;Username=ereader;Password=ereader_dev` |
 | `JWT__KEY` | HS256 signing key, **≥ 32 bytes UTF-8**. Generate with `openssl rand -base64 48`. |
 | `REDIS__CONNECTIONSTRING` | `localhost:6379` for the dockerised Redis. |
 
+> ⚠️ **MinIO creds gap.** The API also reads `MINIO_ENDPOINT`, `MINIO_USER`,
+> `MINIO_PASSWORD`, and `MINIO_BUCKET` from its configuration, and **throws at
+> boot if `MINIO_USER`/`MINIO_PASSWORD` are missing** ([Program.cs](backend/EReader.Api/Program.cs)).
+> The backend `.env.example` does **not** yet include them — add the same four
+> `MINIO_*` lines from `docker/.env` to `backend/EReader.Api/.env` (or export them
+> in the API's shell) or `dotnet run` will fail fast.
+
 > The double underscore (`__`) is the ASP.NET Core convention for nested config
 > keys: `JWT__KEY` binds to `Jwt:Key`, `REDIS__CONNECTIONSTRING` to
-> `Redis:ConnectionString`. Non-secret settings (lifetimes, page sizes, URLs)
-> live in committed `appsettings*.json`. The `.env` is loaded **only in
-> Development** via `DotNetEnv` — in production these are real environment
-> variables and no `.env` should exist.
+> `Redis:ConnectionString`. The `MINIO_*` keys are read as flat config keys, not
+> nested. Non-secret settings (lifetimes, page sizes, URLs) live in committed
+> `appsettings*.json`. The `.env` is loaded **only in Development** via
+> `DotNetEnv` — in production these are real environment variables and no `.env`
+> should exist.
 
 ### Step 3 — run the backend
 
@@ -309,7 +320,8 @@ The only place concrete types are bound to interfaces. Key decisions:
   - **Singleton** (stateless / thread-safe shared state): `IPasswordHasher`,
     `IJwtTokenIssuer` (holds prebuilt signing credentials),
     `IRefreshTokenStore` (deps are the singleton Redis multiplexer + options),
-    `IBookFileStore` (holds a resolved root path), `IConnectionMultiplexer`.
+    `IBookFileStore` → `MinioBookFileStore` (wraps the thread-safe `IMinioClient`
+    + bucket name), `IConnectionMultiplexer`, `IMinioClient`.
   - **Transient** (stateless wrappers): `IEpubParser`, `IEpubAssetReader`.
   - **Scoped** (touch the scoped `DbContext`): every repository, plus
     `IAuthService`, `IUserService`, `IBookService`, `IBookIngestionService`,
@@ -362,15 +374,18 @@ Two distinct credentials:
    we need to read it twice — once to hash, once to persist).
 2. SHA-256 the bytes; reject duplicates **per user** (`ConflictException` →
    409 `DUPLICATE_BOOK`). A `(UserId, FileHash)` unique index backstops races.
-3. Save `source.epub` to `../data/books/{bookId}/` via `LocalBookFileStore`.
+3. `PUT` the EPUB to MinIO at object key `{bookId}/source.epub` via
+   `MinioBookFileStore.SaveSourceAsync`; the returned object key is stored on
+   `Book.FilePath`.
 4. Parse with [EpubParserAdapter](backend/EReader.Data/Parsing/EpubParserAdapter.cs)
    (VersOne.Epub) → `ParsedEpub` (metadata, cover bytes, chapters in spine order).
    All parser exceptions become `MalformedEpubException` (422); cancellation is
    preserved.
-5. Save the cover if present.
+5. Save the cover if present (`{bookId}/cover.{ext}` → `Book.CoverImagePath`).
 6. `BookRepository.AddAsync(book, chapters)` — a single `SaveChanges`, atomic.
-7. **On any failure above the DB write**, the `catch` deletes the per-book
-   directory so no orphaned files linger (the DB row was never committed).
+7. **On any failure above the DB write**, the `catch` calls
+   `DeleteForBookAsync(bookId)` — lists and removes every object under the
+   `{bookId}/` prefix so no orphaned blobs linger (the DB row was never committed).
 
 ### 5.4 Reading a chapter
 
@@ -385,11 +400,14 @@ Served:  <img src="/api/v1/books/{id}/assets/OEBPS/Images/fig1.png">
 
 Rewriting at read time keeps the DB decoupled from the API's route prefix.
 Absolute URLs, fragments (`#…`), protocol-relative (`//…`), `data:` URIs, and
-anything with a URL scheme are deliberately left alone. Assets themselves are
-streamed on demand straight from the EPUB zip
+anything with a URL scheme are deliberately left alone. To serve an asset, the
+source EPUB is pulled from MinIO into a **seekable `MemoryStream`** (the object is
+buffered because `ZipArchive` needs random access — `OpenReadAsync`), then read
+on demand from the zip
 ([ZipEpubAssetReader](backend/EReader.Data/Parsing/ZipEpubAssetReader.cs)) — never
-extracted to disk — using an `ArchiveOwningStream` wrapper so disposing the
-response stream also closes the underlying `ZipArchive`.
+extracted to disk. An `ArchiveOwningStream` wrapper (`leaveOpen: false`) means
+disposing the response stream closes the `ZipArchive` *and* the buffered source
+stream behind it.
 
 ### 5.5 Full-text search
 
@@ -615,6 +633,14 @@ stored via a platform-split module: `tokenStorage.web.ts` (`localStorage`) vs
   on chapter change/unmount, calling `useUpdatePosition` → the `/position`
   endpoint. Prev/next navigation and the `TableOfContents` drawer drive chapter
   changes; the `SettingsDrawer` edits typography/theme.
+- **Deleting a book** is wired into both screens via the reusable
+  [ConfirmDialog](frontend/src/components/ConfirmDialog.tsx) (a themed `<Modal>`
+  with destructive/busy states, same backdrop-tap pattern as `SettingsDrawer`).
+  On the library, each `BookCard` carries an overflow (⋯) button layered over the
+  cover's top-right corner (and a long-press on the cover); in the reader, a ⋯
+  header button. Both open the dialog → `useDeleteBook` → `router.back()` (reader)
+  or list refetch (library). Deletion cascades server-side to chapters, bookmarks,
+  highlights, and reading progress, which the confirm copy spells out.
 
 ### Theme
 
@@ -628,8 +654,11 @@ optimistic `updateGlobal`). Palettes are in [theme/tokens.ts](frontend/src/theme
 
 Per best-practices, **no component fetches in its body.** All server state goes
 through hooks in `src/hooks/` (`useBooks`, `useBook`, `useChapter`, `useSearch`,
-`useUploadBook`, `useReadingSettings`) wrapping React Query, with thin endpoint
-wrappers in `src/services/`. Shared types in
+`useUploadBook`, `useDeleteBook`, `useReadingSettings`) wrapping React Query, with
+thin endpoint wrappers in `src/services/`. `useDeleteBook` is a `DELETE` mutation
+that invalidates the entire `['books']` key family on success (mirroring
+`useUploadBook`) so the removed book disappears from whatever sort/filter is
+mounted. Shared types in
 [types/index.ts](frontend/src/types/index.ts) mirror the backend DTOs (camelCase).
 [AuthImage](frontend/src/components/AuthImage.tsx) exists because cover/asset URLs
 are auth-protected — a plain `<img src>` can't send the Bearer header, so it fetches
@@ -758,8 +787,8 @@ Dev auto-applies on next `dotnet run`. ⚠️ If the migration touches
 
 **Reset local DB**
 ```bash
-docker compose --env-file backend/EReader.Api/.env -f docker/docker-compose.yml down -v   # drops volumes
-docker compose --env-file backend/EReader.Api/.env -f docker/docker-compose.yml up -d      # migrations re-run on next dotnet run
+docker compose --env-file docker/.env -f docker/docker-compose.yml down -v   # drops Postgres + Redis + MinIO volumes
+docker compose --env-file docker/.env -f docker/docker-compose.yml up -d      # migrations re-run + bucket re-created on next dotnet run
 ```
 
 ---
@@ -770,17 +799,24 @@ docker compose --env-file backend/EReader.Api/.env -f docker/docker-compose.yml 
   `LOWER(username)` unique index to a plain one on any migration that touches that
   column. Always inspect generated migrations for `IX_Users_Username_Lower` (or
   any `_Lower` index) and restore the raw `CREATE UNIQUE INDEX … LOWER(...)` form.
-- **`DB_PASSWORD` vs `DATABASE_URL`.** Both live in `backend/EReader.Api/.env`.
-  Compose resolves `$DB_PASSWORD` from its environment (export it, or pass
-  `--env-file backend/EReader.Api/.env`); the backend reads the password embedded
-  in `DATABASE_URL`. The two must match, and Postgres bakes the password into its
-  data volume on first `up` — change it and you must `down -v` to re-init (§4, §11).
+- **Two `.env` files, split by consumer.** `docker/.env` feeds the *container
+  stack* (`DB_PASSWORD`, `MINIO_USER/PASSWORD/BUCKET/ENDPOINT`);
+  `backend/EReader.Api/.env` feeds the *API* (`DATABASE_URL`, `JWT__KEY`,
+  `REDIS__CONNECTIONSTRING`). The `DB_PASSWORD` in the former must match the
+  `Password=` embedded in `DATABASE_URL` in the latter, and Postgres bakes it into
+  its data volume on first `up` — change it and you must `down -v` to re-init.
+- **MinIO creds aren't in the backend template.** The API requires `MINIO_USER`
+  and `MINIO_PASSWORD` (throws at boot otherwise), but `backend/EReader.Api/.env.example`
+  doesn't ship them — copy the `MINIO_*` values from `docker/.env` into the
+  backend `.env` (or export them) before `dotnet run` (§4 Step 2).
 - **Two docs, two altitudes.** This README is the front door (setup, API surface,
   high-level map). [docs/CODE_OVERVIEW.md](docs/CODE_OVERVIEW.md) is the deep-dive:
   §3–11 for backend internals, and §12 is a full frontend walk-through written for
   engineers new to React Native. Keep both in sync when behavior changes.
-- **Upload buffers the whole EPUB into memory** to hash + persist. Fine for the
-  current few-MB books; revisit (streamed/two-pass) if large files arrive.
+- **EPUBs are buffered into memory on both ends.** Upload buffers the whole file
+  to hash + persist; serving an asset/cover pulls the object back from MinIO into a
+  `MemoryStream` (the zip reader needs random access). Fine for the current few-MB
+  books; revisit if large files arrive.
 - **Search snippets contain raw `<mark>` HTML** — sanitize before rendering.
 - **Production CORS and production migrations are intentionally NOT configured** —
   dev-only CORS is in `Program.cs`, and migrations auto-apply only in Development.

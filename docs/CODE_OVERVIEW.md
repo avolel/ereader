@@ -36,8 +36,8 @@ them chapter-by-chapter. The codebase splits cleanly along three boundaries:
                                                               └────────────┘
                                                 +
                                           ┌──────────────────────────┐
-                                          │ Local filesystem store   │
-                                          │ (../data/books/{bookId}) │
+                                          │ MinIO (S3-compatible)    │
+                                          │ object store: {bookId}/… │
                                           └──────────────────────────┘
 ```
 
@@ -47,7 +47,7 @@ them chapter-by-chapter. The codebase splits cleanly along three boundaries:
 |---|---|
 | `EReader.Api` | HTTP boundary. Controllers, DTOs, middleware, `Program.cs` wiring, auth integration with `HttpContext`. |
 | `EReader.Core` | Pure domain. Models, service interfaces, domain exceptions, business logic in `Services/`. **No I/O, no HTTP, no EF.** |
-| `EReader.Data` | Adapters for everything `Core` abstracts: EF `DbContext`, repositories, EPUB parser/asset reader, BCrypt hasher, JWT issuer, Redis store, local file store. |
+| `EReader.Data` | Adapters for everything `Core` abstracts: EF `DbContext`, repositories, EPUB parser/asset reader, BCrypt hasher, JWT issuer, Redis store, MinIO object store. |
 
 The boundary rule: `Core` only references BCL types; `Data` may reference
 `Core`; `Api` may reference both. `Core` defines the *interfaces*, `Data`
@@ -96,7 +96,7 @@ ereader/
 │   │   ├── Migrations/     ← EF Core migrations
 │   │   ├── Parsing/        ← EpubParserAdapter, ZipEpubAssetReader
 │   │   ├── Repositories/   ← UserRepository, BookRepository
-│   │   ├── Storage/        ← LocalBookFileStore, BookStorageOptions
+│   │   ├── Storage/        ← MinioBookFileStore, MinioOptions
 │   │   ├── EReaderDbContext.cs
 │   │   └── DesignTimeDbContextFactory.cs
 │   └── EReader.Tests/      ← xUnit + FluentAssertions + Moq + EF InMemory
@@ -104,13 +104,13 @@ ereader/
 │   ├── app/                ← expo-router file routes (+ (authed) group)
 │   └── src/
 │       ├── screens/        ← Library, Reader, Search, Login, Register
-│       ├── components/     ← ReaderWebView(.web), SettingsDrawer, TOC, AuthImage
+│       ├── components/     ← ReaderWebView(.web), SettingsDrawer, TOC, AuthImage, ConfirmDialog
 │       ├── hooks/          ← React Query data-fetching hooks
 │       ├── providers/      ← Query / Auth / Theme context
 │       ├── services/       ← axios client + endpoint wrappers + tokenStorage
 │       ├── lib/, theme/    ← WebView document builder, color tokens
 │       └── types/index.ts
-├── docker/                 ← docker-compose with Postgres 16 + Redis 7
+├── docker/                 ← docker-compose with Postgres 16 + Redis 7 + MinIO
 ├── docs/                   ← This file lives here
 ├── scripts/                ← download-test-books.sh
 ├── test-books/             ← Sample EPUBs for local testing
@@ -180,10 +180,13 @@ get matched to interfaces. Walk through it linearly:
    the current request.
 
 9. **Book ingestion + reader services:**
-   - `BookStorageOptions` is bound but **not** `ValidateOnStart` — the
-     default `../data/books` works out of the box.
-   - `IBookFileStore → LocalBookFileStore` — **singleton** (just holds a
-     resolved root path).
+   - **MinIO object storage.** `MINIO_ENDPOINT`/`MINIO_USER`/`MINIO_PASSWORD`/
+     `MINIO_BUCKET` are read straight off configuration; `MINIO_USER` and
+     `MINIO_PASSWORD` are **required** (the code throws at boot if either is
+     missing). They bind a `MinioOptions` and a singleton `IMinioClient`
+     (`new MinioClient().WithEndpoint(...).WithCredentials(...).WithSSL(false)`).
+   - `IBookFileStore → MinioBookFileStore` — **singleton** (wraps the thread-safe
+     `IMinioClient` + bucket name).
    - `IEpubParser → EpubParserAdapter` and `IEpubAssetReader → ZipEpubAssetReader`
      — **transient** (stateless wrappers around VersOne.Epub / ZipArchive).
    - `IBookRepository`, `IBookService`, `IBookIngestionService` — **scoped**.
@@ -197,10 +200,13 @@ get matched to interfaces. Walk through it linearly:
     The error middleware sits **outermost** on purpose — it catches
     exceptions thrown anywhere downstream, including from auth.
 
-11. **Dev-only auto-migrate.** In Development, `db.Database.MigrateAsync()`
-    runs on boot so a freshly-pulled branch with new migrations doesn't 500
-    the first request. Production migrations are explicitly *not* auto-run
-    here — they go through a deliberate deployment step.
+11. **Dev-only auto-migrate + bucket bootstrap.** In Development, the same startup
+    scope runs `db.Database.MigrateAsync()` (so a freshly-pulled branch with new
+    migrations doesn't 500 the first request) and then ensures the MinIO bucket
+    exists (`BucketExistsAsync` → `MakeBucketAsync`), so a fresh MinIO volume is
+    usable without a manual `mc mb`. Production migrations and bucket provisioning
+    are explicitly *not* auto-run here — they go through a deliberate deployment
+    step.
 
 ---
 
@@ -362,15 +368,15 @@ IBookIngestionService.IngestAsync
         ├─ buffer to MemoryStream (need to hash + persist)
         ├─ SHA-256 the bytes
         ├─ ExistsByHashAsync? → ConflictException("DUPLICATE_BOOK", 409)
-        ├─ LocalBookFileStore.SaveSourceAsync → ../data/books/{guid}/source.epub
+        ├─ MinioBookFileStore.SaveSourceAsync → PUT object {guid}/source.epub
         ├─ EpubParserAdapter.ParseAsync (VersOne.Epub)
         │       ↓
         │   ParsedEpub { metadata, cover, chapters[] }
-        ├─ if cover → SaveCoverAsync → ../data/books/{guid}/cover.{ext}
+        ├─ if cover → SaveCoverAsync → PUT object {guid}/cover.{ext}
         ├─ BookRepository.AddAsync(book, chapters) ← single SaveChanges, atomic
         │
         ▼  (on any exception above SaveChanges)
-   _files.DeleteForBook(bookId)  ← clean up orphaned files
+   _files.DeleteForBookAsync(bookId)  ← remove every object under {guid}/
 ```
 
 ### 5.1 Why buffer to memory
@@ -390,11 +396,14 @@ concurrent uploads can't bypass the application-level check.
 
 ### 5.3 Orphan cleanup
 
-Files are written to disk *before* the DB row is inserted (`AddAsync` is
+Objects are written to MinIO *before* the DB row is inserted (`AddAsync` is
 the very last step in the `try`). If the parser blows up or the EF write
-fails, the file would be orphaned — so the `catch` block calls
-`DeleteForBook(bookId)` to wipe the per-book directory. The DB row was
-never committed, so there's nothing else to roll back.
+fails, the blobs would be orphaned — so the `catch` block calls
+`DeleteForBookAsync(bookId)`, which lists every object under the `{bookId}/`
+prefix and removes them in one `RemoveObjectsAsync`. The DB row was never
+committed, so there's nothing else to roll back. The stored object keys
+(`{bookId}/source.epub`, `{bookId}/cover.{ext}`) are persisted on
+`Book.FilePath` / `Book.CoverImagePath`.
 
 ### 5.4 EPUB parsing — [EpubParserAdapter](../backend/EReader.Data/Parsing/EpubParserAdapter.cs)
 
@@ -423,14 +432,19 @@ Notable choices:
 
 ### 5.5 Asset reading — [ZipEpubAssetReader](../backend/EReader.Data/Parsing/ZipEpubAssetReader.cs)
 
-EPUBs are zip files. Rather than extract every image/css/font to disk on
-ingest, we **stream them on demand** from the zip archive.
+EPUBs are zip files. Rather than extract every image/css/font on ingest, we
+**read them on demand** from the zip archive. At read time `BookService` pulls the
+source object back from MinIO via `IBookFileStore.OpenReadAsync`, which buffers it
+into a **seekable `MemoryStream`** (`ZipArchive` needs random access; MinIO's
+`GetObjectAsync` callback stream is forward-only), then hands that to
+`ZipEpubAssetReader.OpenAsset`.
 
 The tricky bit: `ZipArchive.Entry.Open()` returns a stream that depends on
-the archive staying open. If we returned just the entry stream and the
-caller disposed it, the archive would leak. So we wrap them in
-`ArchiveOwningStream` — disposing the wrapper disposes both the entry
-*and* the archive.
+the archive staying open, and the archive in turn owns the buffered MinIO
+stream. The reader opens the `ZipArchive` with `leaveOpen: false` and wraps the
+entry in an `ArchiveOwningStream` — disposing the wrapper disposes the entry, the
+`ZipArchive`, *and* the underlying buffered source stream, so nothing leaks once
+ASP.NET flushes the response.
 
 Lookup is case-insensitive because manifest paths inside EPUBs frequently
 disagree with the zip-entry casing.
@@ -627,13 +641,14 @@ Key configuration decisions:
 | 3 | `RestrictUserCascade` | All User-owned FKs → `Restrict` to preserve soft-delete optionality. |
 | 4 | `AddBookPublishedYear` | Adds `Books.PublishedYear int?`. |
 | 5 | `AddUserAuthFields` | `Username` → `varchar(32)`; adds `PasswordHash`, `LastLoginAt`, `IsActive`; deactivates legacy rows with empty `PasswordHash` (so they fail closed at `IsActive` rather than masquerading as a valid login); creates the functional `LOWER(Username)` unique index. |
+| 6 | `AddReadingPositionToReadingSetting` | Adds `LastChapterId`, `LastScrollOffset`, `LastReadAt` to `ReadingSetting` (the saved reading-position columns). |
 
 The full-text search column (`SearchVector`) is a Postgres **stored
 generated column** — `to_tsvector('english', coalesce(ContentText, ''))` —
 with a GIN index. EF has no first-class support for generated tsvector
 columns, so the column + index are managed via raw SQL inside the
-migration. This is the foundation for Phase 1.2 full-text search; no
-service code consumes it yet.
+migration. `SearchService` / `SearchRepository` query it directly with raw SQL
+(`websearch_to_tsquery` + `ts_headline`).
 
 ### 9.3 [DesignTimeDbContextFactory](../backend/EReader.Data/DesignTimeDbContextFactory.cs)
 
@@ -664,30 +679,39 @@ are thin EF wrappers. Two patterns worth flagging:
 
 ---
 
-## 10. Storage layer — files on disk
+## 10. Storage layer — MinIO object storage
 
-`LocalBookFileStore` writes per-book directories under the configured
-`BookFilesRoot` (default `../data/books`):
+`MinioBookFileStore` (implementing `IBookFileStore`) stores source EPUBs and
+extracted covers in a single MinIO bucket (`MinioOptions.Bucket`, default
+`ereader-media`), keyed per book:
 
 ```
-backend/data/books/
+ereader-media/                 (bucket)
 └── {bookId}/
     ├── source.epub
-    └── cover.jpg   (extension preserved from EPUB)
+    └── cover.jpg               (extension preserved from EPUB)
 ```
 
-- The default path is `../data/books` *relative to the API project's
-  working directory*, resolved to absolute at startup. The intent is to
-  push uploads **outside** the API project tree so they can't be
-  accidentally `git add`-ed. Both `backend/data/` and
-  `backend/EReader.Api/data/` are gitignored as a safety net.
-- `OpenRead` returns a fresh `FileStream` with `FileShare.Read`, so
-  concurrent reads of the same source/cover are fine.
-- `DeleteForBook` recursively deletes the per-book directory. Called both
-  on book deletion and on rollback during failed ingestion.
+The object key — not a filesystem path — is what's persisted on
+`Book.FilePath` / `Book.CoverImagePath`.
 
-`IBookFileStore` is the abstraction boundary — the only seam where a
-future S3/Azure Blob backend would plug in.
+- **`SaveSourceAsync`** PUTs `{bookId}/source.epub` with content type
+  `application/epub+zip`. **`SaveCoverAsync`** PUTs `{bookId}/cover.{ext}`.
+  Both return the object key.
+- **`OpenReadAsync`** GETs an object and **buffers it into a seekable
+  `MemoryStream`** before returning — the cover-streaming path and the zip asset
+  reader both need random access, and MinIO's callback stream is forward-only.
+  EPUBs are a few MB, consistent with the in-memory buffering ingestion already
+  does. The caller disposes the stream.
+- **`ExistsAsync`** does a `StatObjectAsync`, treating `ObjectNotFoundException`
+  as `false` — used to 404 cleanly when a row points at a missing object.
+- **`DeleteForBookAsync`** lists every object under the `{bookId}/` prefix
+  (`ListObjectsEnumAsync`) and removes them in one `RemoveObjectsAsync`. Called
+  both on book deletion and on rollback during failed ingestion.
+
+`IBookFileStore` is the abstraction boundary — swapping MinIO for AWS S3 / Azure
+Blob is a matter of a new adapter (the MinIO client already speaks the S3 API, so
+in many cases only the endpoint/credentials change).
 
 ---
 
@@ -865,8 +889,9 @@ wrapper in `src/services/`. Patterns worth internalising:
 
 - **Stable, structured query keys** so invalidation is surgical.
   [useBooks](../frontend/src/hooks/useBooks.ts) keys as
-  `['books', 'list', params]`; `useUploadBook` invalidates `['books']`
-  (the *prefix*), so every sort/filter variant refetches after an upload.
+  `['books', 'list', params]`; `useUploadBook` and `useDeleteBook` both invalidate
+  `['books']` (the *prefix*), so every sort/filter variant refetches after an
+  upload or delete.
 - **`useQuery` vs `useInfiniteQuery`.** Single resources (a book, a chapter,
   settings) use `useQuery`. Paginated lists (library, search) use
   `useInfiniteQuery` with `getNextPageParam: (last) => last.nextCursor`, and the
@@ -957,6 +982,12 @@ the backend `ReadingSetting` model defaults so there's no flash of wrong styling
   `expo-document-picker` (filtered to `application/epub+zip`) and uploads via the
   `useUploadBook` mutation. Upload input is itself platform-split: a web `File`
   vs RN's `{ uri, name, type }` FormData shape ([services/books.ts](../frontend/src/services/books.ts)).
+  Each `BookCard` also carries a delete affordance: an absolutely-positioned
+  overflow (⋯) `Pressable` layered over the cover's top-right corner (a sibling
+  `View` wraps the card so the tap hits the button, not the card) plus a
+  long-press on the cover. Either opens the shared `ConfirmDialog`; confirming
+  runs `useDeleteBook`, driven by a `pendingDelete` (`BookSummary`) state that
+  closes on settle.
 - **[SearchScreen](../frontend/src/screens/SearchScreen.tsx)** — a 300ms debounced
   text input feeds `useSearch` (disabled under 2 chars). Tapping a hit navigates
   to the reader with `params: { bookId, anchor: chapterId }`. The server snippet
@@ -970,6 +1001,13 @@ the backend `ReadingSetting` model defaults so there's no flash of wrong styling
   from propagating through the panel. The settings drawer edits *global* settings
   (per-book override is intentionally out of v1 scope) and fires updates
   fire-and-forget, leaning on the hook's optimistic cache write for snappiness.
+- **[ConfirmDialog](../frontend/src/components/ConfirmDialog.tsx)** — a reusable
+  themed `<Modal>` (destructive/busy states, same backdrop-tap + inner tap-absorb
+  pattern as `SettingsDrawer`) used for book deletion from both the library and
+  the reader. The reader's ⋯ header button opens it; on confirm it deletes the
+  current book via `useDeleteBook` and `router.back()`s to the library. Deletion
+  cascades server-side to chapters, bookmarks, highlights, and reading progress
+  (the confirm copy spells this out).
 
 ### 12.8 Authenticated images — the `<img>` header problem
 
@@ -1021,8 +1059,9 @@ state.
 ## 13. Dev environment
 
 ```bash
-# Database + Redis
-docker compose -f docker/docker-compose.yml up -d
+# Postgres + Redis + MinIO (compose reads docker/.env)
+cp docker/.env.example docker/.env          # then edit the passwords
+docker compose --env-file docker/.env -f docker/docker-compose.yml up -d
 
 # Backend
 cd backend/EReader.Api
@@ -1035,18 +1074,31 @@ cd frontend
 npx expo start --web
 ```
 
-Before first run, copy `.env.example` → `backend/EReader.Api/.env` and
-fill in:
-- `DATABASE_URL` — Postgres connection string (matches docker-compose
-  credentials).
-- `JWT__KEY` — at least 32 bytes UTF-8 (`openssl rand -base64 48`).
-- `REDIS__CONNECTIONSTRING` — `localhost:6379` for the dockerised Redis.
+There are **two** `.env` files, split by consumer:
+
+- **`docker/.env`** (from `docker/.env.example`) feeds the container stack:
+  `DB_PASSWORD`, plus `MINIO_USER` / `MINIO_PASSWORD` / `MINIO_BUCKET` /
+  `MINIO_ENDPOINT`. The MinIO console UI is at `http://localhost:9001`.
+- **`backend/EReader.Api/.env`** (from `backend/EReader.Api/.env.example`) feeds
+  the API:
+  - `DATABASE_URL` — Postgres connection string; its `Password=` must match
+    `DB_PASSWORD` in `docker/.env`.
+  - `JWT__KEY` — at least 32 bytes UTF-8 (`openssl rand -base64 48`).
+  - `REDIS__CONNECTIONSTRING` — `localhost:6379` for the dockerised Redis.
+
+⚠️ The API *also* reads `MINIO_ENDPOINT` / `MINIO_USER` / `MINIO_PASSWORD` /
+`MINIO_BUCKET` from its configuration and **throws at boot if the creds are
+missing** — but they're not in the backend `.env.example` yet. Add the same
+`MINIO_*` values from `docker/.env` to the backend `.env` (or export them) before
+`dotnet run`.
 
 The double underscore (`__`) in env-var names is the ASP.NET Core
-convention for nested config keys (`Jwt:Key` ⇔ `JWT__KEY`).
+convention for nested config keys (`Jwt:Key` ⇔ `JWT__KEY`); the `MINIO_*` keys are
+flat, not nested.
 
-In Development the API auto-applies pending EF migrations on boot, so you
-can pull a branch with new migrations and the first request still works.
+In Development the API auto-applies pending EF migrations on boot **and ensures
+the MinIO bucket exists**, so you can pull a branch with new migrations / a fresh
+MinIO volume and the first request still works.
 
 ---
 
