@@ -5,7 +5,6 @@ using EReader.Core.Models;
 using EReader.Core.Services;
 using FluentAssertions;
 using Moq;
-using System.Collections.Generic;
 
 namespace EReader.Tests.Services;
 
@@ -202,7 +201,7 @@ public class BookServiceTests
         await service.DeleteAsync(bookId, userId, CancellationToken.None);
 
         _books.Verify(r => r.RemoveAsync(book, It.IsAny<CancellationToken>()), Times.Once);
-        _files.Verify(f => f.DeleteForBook(bookId), Times.Once);
+        _files.Verify(f => f.DeleteForBookAsync(bookId, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -214,7 +213,7 @@ public class BookServiceTests
 
         _books.Setup(r => r.GetByIdAsync(bookId, userId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(book);
-        _files.Setup(f => f.Exists("/tmp/missing-cover.png")).Returns(false);
+        _files.Setup(f => f.ExistsAsync("{guid}/cover.png", It.IsAny<CancellationToken>())).Returns(Task.FromResult(false));
 
         var service = BuildService();
 

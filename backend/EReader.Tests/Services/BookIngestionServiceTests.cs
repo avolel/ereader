@@ -64,7 +64,7 @@ public class BookIngestionServiceTests
             .ReturnsAsync(false);
         _files.Setup(f => f.SaveSourceAsync(It.IsAny<Guid>(), It.IsAny<Stream>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync("/tmp/whatever.epub");
-        _parser.Setup(p => p.ParseAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _parser.Setup(p => p.ParseAsync(It.IsAny<Stream>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(BuildParsedEpub());
 
         var service = BuildService();
@@ -111,7 +111,7 @@ public class BookIngestionServiceTests
             .ReturnsAsync(false);
         _files.Setup(f => f.SaveSourceAsync(It.IsAny<Guid>(), It.IsAny<Stream>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync("/tmp/whatever.epub");
-        _parser.Setup(p => p.ParseAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _parser.Setup(p => p.ParseAsync(It.IsAny<Stream>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new MalformedEpubException("bad opf"));
 
         var service = BuildService();
@@ -126,7 +126,7 @@ public class BookIngestionServiceTests
         await act.Should().ThrowAsync<MalformedEpubException>();
 
         // Orphaned file must be cleaned up since no DB row was inserted.
-        _files.Verify(f => f.DeleteForBook(It.IsAny<Guid>()), Times.Once);
+        _files.Verify(f => f.DeleteForBookAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Once);
         _books.Verify(
             r => r.AddAsync(It.IsAny<Book>(), It.IsAny<IEnumerable<Chapter>>(), It.IsAny<CancellationToken>()),
             Times.Never);
@@ -139,7 +139,7 @@ public class BookIngestionServiceTests
             .ReturnsAsync(false);
         _files.Setup(f => f.SaveSourceAsync(It.IsAny<Guid>(), It.IsAny<Stream>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync("/tmp/whatever.epub");
-        _parser.Setup(p => p.ParseAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _parser.Setup(p => p.ParseAsync(It.IsAny<Stream>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(BuildParsedEpub(chapterCount: 4));
 
         IEnumerable<Chapter>? captured = null;
@@ -173,7 +173,7 @@ public class BookIngestionServiceTests
             .ReturnsAsync(false);
         _files.Setup(f => f.SaveSourceAsync(It.IsAny<Guid>(), It.IsAny<Stream>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync("/tmp/whatever.epub");
-        _parser.Setup(p => p.ParseAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _parser.Setup(p => p.ParseAsync(It.IsAny<Stream>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(BuildParsedEpub(cover: cover));
         _files.Setup(f => f.SaveCoverAsync(
                 It.IsAny<Guid>(),

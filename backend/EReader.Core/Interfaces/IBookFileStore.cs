@@ -1,16 +1,19 @@
 namespace EReader.Core.Interfaces;
 
-// Filesystem (or future S3) adapter for original EPUBs and extracted covers.
-// All paths returned/accepted are absolute as stored on Book.FilePath / Book.CoverImagePath.
+// Object-storage adapter (MinIO) for original EPUBs and extracted covers.
+// Paths returned/accepted are MinIO object KEYS, stored on
+// Book.FilePath / Book.CoverImagePath (e.g. "{bookId}/source.epub").
 public interface IBookFileStore
 {
     Task<string> SaveSourceAsync(Guid bookId, Stream contents, CancellationToken ct);
 
     Task<string> SaveCoverAsync(Guid bookId, byte[] bytes, string fileExtension, CancellationToken ct);
 
-    Stream OpenRead(string absolutePath);
+    // Returns a SEEKABLE in-memory stream (the object is buffered) — callers
+    // (cover streaming, zip asset reader) need random access. Caller disposes.
+    Task<Stream> OpenReadAsync(string objectKey, CancellationToken ct);
 
-    bool Exists(string absolutePath);
+    Task<bool> ExistsAsync(string objectKey, CancellationToken ct);
 
-    void DeleteForBook(Guid bookId);
+    Task DeleteForBookAsync(Guid bookId, CancellationToken ct);
 }
