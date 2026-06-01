@@ -14,6 +14,8 @@ import {
 } from 'react-native';
 
 import AuthImage from '../components/AuthImage';
+import ConfirmDialog from '../components/ConfirmDialog';
+import { useDeleteBook } from '../hooks/useDeleteBook';
 import { useBooks } from '../hooks/useBooks';
 import { useUploadBook } from '../hooks/useUploadBook';
 import { useAuth } from '../providers/AuthProvider';
@@ -41,6 +43,8 @@ export default function LibraryScreen() {
   const { width } = useWindowDimensions();
   const [sortIndex, setSortIndex] = useState(0);
   const [authorFilter, setAuthorFilter] = useState('');
+  const [pendingDelete, setPendingDelete] = useState<BookSummary | null>(null);
+  const deleteMutation = useDeleteBook();
   // Committed value used for the actual query so we don't refetch on every keystroke.
   const [committedAuthor, setCommittedAuthor] = useState('');
 
@@ -196,13 +200,14 @@ export default function LibraryScreen() {
           renderItem={({ item }) => (
             <BookCard
               book={item}
-              width={coverWidth}
+              width={coverWidth}              
               onPress={() =>
                 router.push({
                   pathname: '/(authed)/reader/[bookId]',
                   params: { bookId: item.id },
                 })
               }
+              onRequestDelete={() => setPendingDelete(item)}
             />
           )}
         />
@@ -222,38 +227,75 @@ export default function LibraryScreen() {
           <Text style={styles.fabIcon}>+</Text>
         )}
       </Pressable>
+
+      <ConfirmDialog
+        visible={pendingDelete !== null}
+        title="Delete book?"
+        message={
+          pendingDelete
+            ? `"${pendingDelete.title}" and its bookmarks, highlights, and reading progress will be permanently deleted.`
+            : ''
+        }
+        confirmLabel="Delete"
+        destructive
+        busy={deleteMutation.isPending}
+        onCancel={() => setPendingDelete(null)}
+        onConfirm={async () => {
+          if (!pendingDelete) return;
+          try {
+            await deleteMutation.mutateAsync(pendingDelete.id);
+          } catch {
+            // surfaced below via deleteMutation.error
+          } finally {
+            setPendingDelete(null);
+          }
+        }}
+    />
     </View>
   );
 }
 
-type BookCardProps = { book: BookSummary; width: number; onPress: () => void };
-function BookCard({ book, width, onPress }: BookCardProps) {
+type BookCardProps = { book: BookSummary; width: number; onPress: () => void; onRequestDelete: () => void };
+
+function BookCard({ book, width, onPress, onRequestDelete }: BookCardProps) {
   const theme = useTheme();
   const coverHeight = width / COVER_ASPECT;
   return (
-    <Pressable
-      onPress={onPress}
-      accessibilityLabel={`Open ${book.title}`}
-      style={({ pressed }) => [{ width, opacity: pressed ? 0.85 : 1 }]}
-    >
-      <AuthImage
-        url={absoluteCoverUrl(book.coverUrl)}
-        style={{ width, height: coverHeight, borderRadius: 4, backgroundColor: theme.colors.surface }}
-        placeholderStyle={{
-          backgroundColor: theme.colors.surface,
-          borderRadius: 4,
-          borderWidth: 1,
-          borderColor: theme.colors.border,
-        }}
-        alt={book.title}
-      />
-      <Text style={[styles.bookTitle, { color: theme.colors.text }]} numberOfLines={2}>
-        {book.title}
-      </Text>
-      <Text style={[styles.bookAuthor, { color: theme.colors.textMuted }]} numberOfLines={1}>
-        {book.author}
-      </Text>
-    </Pressable>
+    <View style={{ width }}>
+      <Pressable
+        onPress={onPress}
+        onLongPress={onRequestDelete}
+        accessibilityLabel={`Open ${book.title}`}
+        style={({ pressed }) => [{ opacity: pressed ? 0.85 : 1 }]}
+      >
+        <AuthImage
+          url={absoluteCoverUrl(book.coverUrl)}
+          style={{ width, height: coverHeight, borderRadius: 4, backgroundColor: theme.colors.surface }}
+          placeholderStyle={{
+            backgroundColor: theme.colors.surface,
+            borderRadius: 4,
+            borderWidth: 1,
+            borderColor: theme.colors.border,
+          }}
+          alt={book.title}
+        />
+        <Text style={[styles.bookTitle, { color: theme.colors.text }]} numberOfLines={2}>
+          {book.title}
+        </Text>
+        <Text style={[styles.bookAuthor, { color: theme.colors.textMuted }]} numberOfLines={1}>
+          {book.author}
+        </Text>
+      </Pressable>
+
+      <Pressable
+        onPress={onRequestDelete}
+        accessibilityLabel={`Delete ${book.title}`}
+        hitSlop={8}
+        style={styles.overflowButton}
+      >
+        <Text style={styles.overflowIcon}>⋯</Text>
+      </Pressable>
+    </View>
   );
 }
 
@@ -310,4 +352,16 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
   fabIcon: { color: '#fff', fontSize: 32, lineHeight: 36, marginTop: -2 },
+  overflowButton: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.45)',
+  },
+  overflowIcon: { color: '#fff', fontSize: 18, lineHeight: 18, marginTop: -4 },
 });

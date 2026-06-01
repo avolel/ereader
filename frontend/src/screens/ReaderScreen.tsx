@@ -14,6 +14,8 @@ import ReaderWebView, {
 } from '../components/ReaderWebView';
 import SettingsDrawer from '../components/SettingsDrawer';
 import TableOfContents from '../components/TableOfContents';
+import ConfirmDialog from '../components/ConfirmDialog';
+import { useDeleteBook } from '../hooks/useDeleteBook';
 import { useBook } from '../hooks/useBook';
 import { useBookSettings, useUpdatePosition } from '../hooks/useReadingSettings';
 import { useChapter } from '../hooks/useChapter';
@@ -32,6 +34,8 @@ export default function ReaderScreen() {
   const { colors } = useTheme();
   const bookQuery = useBook(bookId);
   const settingsQuery = useBookSettings(bookId);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const deleteMutation = useDeleteBook();
   const positionMutation = useUpdatePosition(bookId ?? '');
 
   // currentChapterId is local state, seeded from saved position once both
@@ -169,11 +173,12 @@ export default function ReaderScreen() {
             <Text style={[styles.chapterTitle, { color: colors.textMuted }]} numberOfLines={1}>
               {currentTocEntry.title ?? `Chapter ${currentTocEntry.spineOrder + 1}`}
             </Text>
-          )}
+          )}          
         </View>
         <View style={styles.headerRight}>
           <HeaderButton label="TOC" onPress={() => setTocOpen(true)} colors={colors} />
           <HeaderButton label="Aa" onPress={() => setSettingsOpen(true)} colors={colors} />
+          <HeaderButton label="⋯" onPress={() => setConfirmDelete(true)} colors={colors} />
         </View>
       </View>
 
@@ -225,6 +230,26 @@ export default function ReaderScreen() {
         onClose={() => setTocOpen(false)}
       />
       <SettingsDrawer visible={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <ConfirmDialog
+        visible={confirmDelete}
+        title="Delete book"
+        message={` "${book.title}" and its bookmarks, highlights, and reading progress will be permanently deleted.`}
+        confirmLabel="Delete"
+        destructive
+        busy={deleteMutation.isPending}
+        onConfirm={async () => {
+          if (!bookId) return;
+          try {
+            await deleteMutation.mutateAsync(bookId);
+            router.back(); // back to library; useDeleteBook already invalidated the list
+          } catch {
+            // surfaced via deleteMutation.error
+          } finally {
+            setConfirmDelete(false);
+          }
+        }}
+        onCancel={() => setConfirmDelete(false)}
+      />
     </View>
   );
 }
