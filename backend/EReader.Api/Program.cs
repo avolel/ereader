@@ -92,6 +92,9 @@ builder.Services.Configure<MinioOptions>(o =>
     o.UseSSL = false;
 });
 
+builder.Services.AddScoped<IAnnotationRepository, AnnotationRepository>();
+builder.Services.AddScoped<IAnnotationService, AnnotationService>();
+
 builder.Services.AddSingleton<IMinioClient>(_ =>
     new MinioClient()
         .WithEndpoint(minioEndpoint)

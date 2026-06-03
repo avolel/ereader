@@ -11,16 +11,28 @@ import {
 import ReaderWebView, {
   ReaderWebViewHandle,
   ReaderWebViewMessage,
+  RenderHighlight,
+  DOMRectLike,
+  FlashTarget,
 } from '../components/ReaderWebView';
 import SettingsDrawer from '../components/SettingsDrawer';
 import TableOfContents from '../components/TableOfContents';
 import ConfirmDialog from '../components/ConfirmDialog';
+import SelectionMenu from '../components/SelectionMenu';
+import AnnotationPopover from '../components/AnnotationPopover';
+import AnnotationsDrawer from '../components/AnnotationsDrawer'; // FR-24 consolidated view
+import NoteEditor from '../components/NoteEditor';
 import { useDeleteBook } from '../hooks/useDeleteBook';
+import {
+  useAnnotations, useCreateAnnotation, useUpdateAnnotation, useDeleteAnnotation,
+} from '../hooks/useAnnotations';
+import { useBookmarks, useCreateBookmark, useDeleteBookmark } from '../hooks/useBookmarks';
 import { useBook } from '../hooks/useBook';
 import { useBookSettings, useUpdatePosition } from '../hooks/useReadingSettings';
 import { useChapter } from '../hooks/useChapter';
 import { useTheme } from '../providers/ThemeProvider';
 import { extractApiError } from '../services/errors';
+import { Annotation, HighlightColour, TextAnchor } from '../types';
 
 const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:5000';
 const POSITION_SAVE_DELAY_MS = 1200;
@@ -34,9 +46,17 @@ export default function ReaderScreen() {
   const { colors } = useTheme();
   const bookQuery = useBook(bookId);
   const settingsQuery = useBookSettings(bookId);
+  const bookmarksQuery = useBookmarks(bookId);
+  const annotationsQuery = useAnnotations(bookId);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const deleteMutation = useDeleteBook();
   const positionMutation = useUpdatePosition(bookId ?? '');
+
+  const createAnnotation = useCreateAnnotation(bookId ?? '');
+  const updateAnnotation = useUpdateAnnotation(bookId ?? '');
+  const deleteAnnotation = useDeleteAnnotation(bookId ?? '');
+  const createBookmark = useCreateBookmark(bookId ?? '');
+  const deleteBookmark = useDeleteBookmark(bookId ?? '');
 
   // currentChapterId is local state, seeded from saved position once both
   // book and settings have loaded. anchor (from search results) wins if set.
@@ -44,7 +64,27 @@ export default function ReaderScreen() {
   const [initialScrollY, setInitialScrollY] = useState(0);
   const [tocOpen, setTocOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [annotationsOpen, setAnnotationsOpen] = useState(false); // FR-24 drawer
+  // Selection action popover: anchor (sans chapterId, attached on save) + where to position it.
+  const [selection, setSelection] = useState<
+    { anchor: Omit<TextAnchor, 'chapterId'>; selectedText: string; rect: DOMRectLike } | null
+  >(null);
+  // Tapped existing highlight → edit/delete popover.
+  const [activeHighlight, setActiveHighlight] = useState<
+    { annotation: Annotation; rect: DOMRectLike } | null
+  >(null);
+  // Note editor (shared by create-from-selection and edit-existing).
+  const [noteEditor, setNoteEditor] = useState<
+    | { mode: 'create'; anchor: Omit<TextAnchor, 'chapterId'>; selectedText: string; chapterId: string }
+    | { mode: 'edit'; id: string; initialBody: string }
+    | null
+  >(null);
+  // Gates applyHighlights() until the WebView reports 'ready' (DOM laid out).
+  const [webViewReady, setWebViewReady] = useState(false);
   const webRef = useRef<ReaderWebViewHandle>(null);
+  // A flash queued while navigating to another chapter; flushed once that
+  // chapter's WebView reports ready (see the applyHighlights effect).
+  const pendingFlashRef = useRef<FlashTarget | null>(null);
   // Track the most recent scrollY reported by the WebView so we can persist it.
   const lastScrollYRef = useRef(0);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -87,11 +127,59 @@ export default function ReaderScreen() {
     return bookQuery.data.toc.findIndex((c) => c.chapterId === currentChapterId);
   }, [bookQuery.data, currentChapterId]);
 
+  // Annotations → render marks for the chapter currently on screen.
+  // Bookmarks are NOT marks; they only feed the drawer/creation, so they're excluded here.
+  const currentChapterHighlights = useMemo<RenderHighlight[]>(() => {
+    const list = annotationsQuery.data ?? [];
+    return list
+      .filter((a) => a.chapterId === currentChapterId)
+      .map((a) => ({
+        id: a.id,
+        anchor: JSON.parse(a.textAnchor) as TextAnchor,
+        // Notes carry colour: null; give their mark a default swatch.
+        colour: (a.colour ?? 'yellow') as HighlightColour,
+      }));
+  }, [annotationsQuery.data, currentChapterId]);
+
+  // First paint is seeded via the `highlights` prop (buildChapterDocument). This
+  // effect handles *live* add/update/delete within a chapter by re-injecting the
+  // full list. Reapplying identical marks is idempotent, so we don't diff.
+  useEffect(() => {
+    if (!webViewReady) return;
+    webRef.current?.applyHighlights(currentChapterHighlights);
+    // Flush a flash queued by a cross-chapter "jump to" once marks are in place.
+    if (pendingFlashRef.current) {
+      webRef.current?.flashTo(pendingFlashRef.current);
+      pendingFlashRef.current = null;
+    }
+  }, [currentChapterHighlights, webViewReady]);
+
+  // "Jump to" from the consolidated drawer. Same chapter → flash now; different
+  // chapter → switch and let the ready-effect flush the queued flash.
+  const navigateToEntry = useCallback(
+    (chapterId: string, target: FlashTarget) => {
+      setAnnotationsOpen(false);
+      if (chapterId === currentChapterId) {
+        if (webViewReady) webRef.current?.flashTo(target);
+        else pendingFlashRef.current = target;
+      } else {
+        pendingFlashRef.current = target;
+        goToChapter(chapterId);
+      }
+    },
+    // goToChapter is stable (useCallback []); other deps are primitives/state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [currentChapterId, webViewReady],
+  );
+
   const goToChapter = useCallback((chapterId: string) => {
     flushPosition();
     setCurrentChapterId(chapterId);
     setInitialScrollY(0);
     lastScrollYRef.current = 0;
+    setWebViewReady(false); // WebView remounts on chapter change; wait for 'ready' again
+    setSelection(null);
+    setActiveHighlight(null);
     setTocOpen(false);
   }, []);
 
@@ -134,16 +222,95 @@ export default function ReaderScreen() {
     };
   }, []);
 
+  // Stamp the current chapter onto a selection anchor to form a full TextAnchor.
+  function withChapter(anchor: Omit<TextAnchor, 'chapterId'>): TextAnchor {
+    return { ...anchor, chapterId: currentChapterId ?? '' };
+  }
+
+  function handleHighlight(colour: HighlightColour) {
+    if (!selection || !currentChapterId) return;
+    createAnnotation.mutate({
+      type: 'highlight',
+      chapterId: currentChapterId,
+      colour,
+      textAnchor: JSON.stringify(withChapter(selection.anchor)),
+      selectedText: selection.selectedText,
+      noteBody: null,
+    });
+    setSelection(null);
+  }
+
+  // "Add note" from the selection menu: stash the selection and open the editor.
+  function openNoteEditorForSelection() {
+    if (!selection || !currentChapterId) return;
+    setNoteEditor({
+      mode: 'create',
+      anchor: selection.anchor,
+      selectedText: selection.selectedText,
+      chapterId: currentChapterId,
+    });
+    setSelection(null);
+  }
+
+  // NoteEditor save: create a new note annotation, or patch an existing one.
+  function handleNoteSave(body: string) {
+    if (!noteEditor) return;
+    if (noteEditor.mode === 'create') {
+      // Empty body on create → nothing to save (treat as cancel).
+      if (body) {
+        createAnnotation.mutate({
+          type: 'note',
+          chapterId: noteEditor.chapterId,
+          colour: null,
+          textAnchor: JSON.stringify({ ...noteEditor.anchor, chapterId: noteEditor.chapterId }),
+          selectedText: noteEditor.selectedText,
+          noteBody: body,
+        });
+      }
+    } else {
+      updateAnnotation.mutate({ id: noteEditor.id, input: { noteBody: body } });
+    }
+    setNoteEditor(null);
+  }
+
+  // anchor omitted → chapter-top marker so a bookmark can be dropped without selecting text.
+  function handleBookmark(anchor?: Omit<TextAnchor, 'chapterId'>) {
+    if (!currentChapterId) return;
+    const full: TextAnchor = anchor
+      ? withChapter(anchor)
+      : { chapterId: currentChapterId, start: 0, end: 0, prefix: '', exact: '', suffix: '' };
+    createBookmark.mutate({ chapterId: currentChapterId, textAnchor: JSON.stringify(full), label: null });
+    setSelection(null);
+  }
+
   const handleWebViewMessage = useCallback(
     (msg: ReaderWebViewMessage) => {
-      if (msg.type === 'scroll') {
-        lastScrollYRef.current = msg.scrollY;
-        schedulePositionSave();
+      switch (msg.type) {
+        case 'scroll':
+          lastScrollYRef.current = msg.scrollY;
+          schedulePositionSave();
+          break;
+        case 'ready':
+          setWebViewReady(true);
+          break;
+        case 'selection':
+          setActiveHighlight(null);
+          setSelection({ anchor: msg.anchor, selectedText: msg.selectedText, rect: msg.rect });
+          break;
+        case 'highlightTap': {
+          const annotation = (annotationsQuery.data ?? []).find((a) => a.id === msg.id);
+          if (!annotation) break; // cache/DOM out of sync — ignore the tap
+          setSelection(null);
+          setActiveHighlight({ annotation, rect: msg.rect });
+          break;
+        }
+        case 'anchorMiss':
+          // Highlight couldn't be re-anchored after reflow. Non-fatal; the drawer
+          // is where orphaned marks should surface. No inline action here.
+          break;
       }
-      // 'ready' is currently informational; future highlight-rendering work
-      // will use it to know when DOM is laid out before injecting spans.
     },
-    [],
+    [annotationsQuery.data],
   );
 
   if (bookQuery.isLoading) {
@@ -177,6 +344,7 @@ export default function ReaderScreen() {
         </View>
         <View style={styles.headerRight}>
           <HeaderButton label="TOC" onPress={() => setTocOpen(true)} colors={colors} />
+          <HeaderButton label="✎" onPress={() => setAnnotationsOpen(true)} colors={colors} />
           <HeaderButton label="Aa" onPress={() => setSettingsOpen(true)} colors={colors} />
           <HeaderButton label="⋯" onPress={() => setConfirmDelete(true)} colors={colors} />
         </View>
@@ -193,6 +361,7 @@ export default function ReaderScreen() {
           assetsBaseUrl={`${BASE_URL}/api/v1/books/${bookId}/assets/`}
           initialScrollY={initialScrollY}
           language={book.language}
+          highlights={currentChapterHighlights}
           onMessage={handleWebViewMessage}
         />
       ) : null}
@@ -230,6 +399,58 @@ export default function ReaderScreen() {
         onClose={() => setTocOpen(false)}
       />
       <SettingsDrawer visible={settingsOpen} onClose={() => setSettingsOpen(false)} />
+
+      {selection && (
+        <SelectionMenu
+          rect={selection.rect}
+          onHighlight={handleHighlight}
+          onAddNote={openNoteEditorForSelection}
+          onBookmark={() => handleBookmark(selection.anchor)}
+          onClose={() => setSelection(null)}
+        />
+      )}
+
+      {activeHighlight && (
+        <AnnotationPopover
+          annotation={activeHighlight.annotation}
+          rect={activeHighlight.rect}
+          onChangeColour={(colour) =>
+            updateAnnotation.mutate({ id: activeHighlight.annotation.id, input: { colour } })}
+          onRequestEditNote={() => {
+            setNoteEditor({
+              mode: 'edit',
+              id: activeHighlight.annotation.id,
+              initialBody: activeHighlight.annotation.noteBody ?? '',
+            });
+            setActiveHighlight(null);
+          }}
+          onDelete={() => {
+            deleteAnnotation.mutate(activeHighlight.annotation.id);
+            setActiveHighlight(null);
+          }}
+          onClose={() => setActiveHighlight(null)}
+        />
+      )}
+
+      <NoteEditor
+        visible={!!noteEditor}
+        initialBody={noteEditor?.mode === 'edit' ? noteEditor.initialBody : ''}
+        title={noteEditor?.mode === 'edit' ? 'Edit note' : 'Add note'}
+        onSave={handleNoteSave}
+        onCancel={() => setNoteEditor(null)}
+      />
+
+      <AnnotationsDrawer
+        visible={annotationsOpen}
+        toc={book.toc}
+        annotations={annotationsQuery.data ?? []}
+        bookmarks={bookmarksQuery.data ?? []}
+        currentChapterId={currentChapterId}
+        onNavigate={navigateToEntry}
+        onDeleteAnnotation={(id) => deleteAnnotation.mutate(id)}
+        onDeleteBookmark={(id) => deleteBookmark.mutate(id)}
+        onClose={() => setAnnotationsOpen(false)}
+      />
       <ConfirmDialog
         visible={confirmDelete}
         title="Delete book"

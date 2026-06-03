@@ -2,20 +2,33 @@ import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from 'rea
 
 import { useThemeContext } from '../providers/ThemeProvider';
 import { buildChapterDocument } from '../lib/webviewScripts';
+import { HighlightColour, TextAnchor } from '../types';
+
+export type DOMRectLike = { x: number; y: number; width: number; height: number };
+export type RenderHighlight = { id: string; anchor: TextAnchor; colour: HighlightColour };
+// Scroll-to/flash target: an existing mark by id, or an anchor to resolve.
+export type FlashTarget = { id?: string; anchor?: TextAnchor };
 
 export type ReaderWebViewHandle = {
   scrollTo: (y: number) => void;
+  applyHighlights: (list: RenderHighlight[]) => void;
+  flashTo: (target: FlashTarget) => void;
 };
 
 export type ReaderWebViewMessage =
   | { type: 'scroll'; scrollY: number }
-  | { type: 'ready'; height: number };
+  | { type: 'ready'; height: number }
+  // anchor has no chapterId — the WebView can't know it; the screen attaches it on save.
+  | { type: 'selection'; anchor: Omit<TextAnchor, 'chapterId'>; selectedText: string; rect: DOMRectLike }
+  | { type: 'highlightTap'; id: string; rect: DOMRectLike }
+  | { type: 'anchorMiss'; id: string };
 
 type Props = {
   chapterHtml: string;
   assetsBaseUrl: string;
   initialScrollY?: number;
   language?: string | null;
+  highlights: RenderHighlight[];
   onMessage: (msg: ReaderWebViewMessage) => void;
 };
 
@@ -29,7 +42,7 @@ type Props = {
 // proxy them through the API. For now everything is same-origin so the iframe
 // can pull /api/v1/books/{id}/assets/... directly.
 const ReaderWebView = forwardRef<ReaderWebViewHandle, Props>(function ReaderWebView(
-  { chapterHtml, initialScrollY, language, onMessage },
+  { chapterHtml, initialScrollY, language, highlights, onMessage },
   ref,
 ) {
   const { globalSetting, theme } = useThemeContext();
@@ -37,21 +50,33 @@ const ReaderWebView = forwardRef<ReaderWebViewHandle, Props>(function ReaderWebV
 
   useImperativeHandle(ref, () => ({
     scrollTo: (y: number) => {
-      const win = iframeRef.current?.contentWindow;
-      win?.scrollTo(0, Number(y) || 0);
+      iframeRef.current?.contentWindow?.scrollTo(0, Number(y) || 0);
+    },
+    applyHighlights: (list: RenderHighlight[]) => {
+      iframeRef.current?.contentWindow?.postMessage({ __er: 'applyHighlights', list }, '*');
+    },
+    flashTo: (target: FlashTarget) => {
+      iframeRef.current?.contentWindow?.postMessage({ __er: 'flashTo', target }, '*');
     },
   }));
 
   const srcDoc = useMemo(
     () =>
-      buildChapterDocument({
-        chapterHtml,
-        setting: globalSetting,
-        webviewColors: theme.colors.webview,
-        resolvedMode: theme.resolvedMode,
-        language,
-        initialScrollY,
-      }),
+      buildChapterDocument(
+        {
+          chapterHtml,
+          setting: globalSetting,
+          webviewColors: theme.colors.webview,
+          resolvedMode: theme.resolvedMode,
+          language,
+          initialScrollY,
+        },
+        highlights,
+      ),
+    // `highlights` intentionally excluded: it only seeds first paint. Live
+    // add/delete goes through applyHighlights() so the iframe never remounts
+    // (preserves scroll). Re-including it would rebuild srcDoc → remount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [chapterHtml, globalSetting, theme.colors.webview, theme.resolvedMode, language, initialScrollY],
   );
 
