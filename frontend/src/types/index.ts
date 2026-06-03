@@ -128,3 +128,54 @@ export type ReadingPositionUpdate = {
   chapterId: string;
   scrollOffset: number;
 };
+
+export type AnnotationType = 'highlight' | 'note';
+
+// Reflow-safe selector. Serialized to JSON and sent as `textAnchor`.
+export type TextAnchor = {
+  chapterId: string;
+  start: number;
+  end: number;
+  prefix: string;
+  exact: string;
+  suffix: string;
+};
+
+export type HighlightColour = 'yellow' | 'green' | 'blue' | 'pink' | 'orange';
+
+export type Annotation = {
+  id: string;
+  bookId: string;
+  chapterId: string | null;
+  type: AnnotationType;
+  colour: HighlightColour | null;
+  textAnchor: string;       // JSON-encoded TextAnchor
+  selectedText: string;
+  noteBody: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type Bookmark = {
+  id: string;
+  bookId: string;
+  chapterId: string | null;
+  textAnchor: string;
+  label: string | null;
+  createdAt: string;
+};
+
+export type AnnotationListResponse = { items: Annotation[]; nextCursor: string | null };
+export type BookmarkListResponse = { items: Bookmark[]; nextCursor: string | null };
+
+export type CreateAnnotationInput = {
+  type: AnnotationType;
+  chapterId: string | null;
+  colour: HighlightColour | null;
+  textAnchor: string;
+  selectedText: string;
+  noteBody: string | null;
+};
+export type UpdateAnnotationInput = { colour?: HighlightColour; noteBody?: string };
+export type CreateBookmarkInput = { chapterId: string | null; textAnchor: string; label: string | null };
+export type UpdateBookmarkInput = { label?: string };
