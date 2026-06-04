@@ -92,6 +92,16 @@ const ReaderWebView = forwardRef<ReaderWebViewHandle, Props>(function ReaderWebV
     return () => window.removeEventListener('message', handle);
   }, [onMessage]);
 
+  // Sync highlights to the iframe whenever the prop updates
+  useEffect(() => {
+    if (iframeRef.current?.contentWindow) {
+      iframeRef.current.contentWindow.postMessage(
+        { __er: 'applyHighlights', list: highlights },
+        '*'
+      );
+    }
+  }, [highlights]);
+
   return (
     <iframe
       ref={iframeRef}
