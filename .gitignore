@@ -13,7 +13,13 @@ backend/EReader.Api/Data/*.sqlite
 # Local book storage — user uploads land here at runtime, never commit them.
 # Both paths are listed because the default storage root has moved over time.
 backend/data/
-backend/EReader.Api/data/
+# Ignore the *contents* of data/ (not the dir itself) so the committed offline
+# dictionary dataset below can be re-included — git can't un-ignore a file whose
+# parent directory is excluded outright.
+backend/EReader.Api/data/*
+!backend/EReader.Api/data/dictionary/
+backend/EReader.Api/data/dictionary/*
+!backend/EReader.Api/data/dictionary/wordnet.json.gz
 
 # Build artefacts
 backend/**/bin/
