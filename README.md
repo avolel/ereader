@@ -12,10 +12,12 @@ engineer can get productive and maintain the project without a hand-off.
 
 > For a deeper, narrative walk-through of the **backend internals** (the auth
 > token model, the ingestion pipeline, the Lua refresh script, EF mapping
-> decisions), read [docs/CODE_OVERVIEW.md](docs/CODE_OVERVIEW.md). This README
-> covers the whole system end-to-end and stays current with the frontend; that
-> document goes deeper on the backend and is the canonical reference for the
-> security-sensitive pieces.
+> decisions) and a **full frontend deep-dive for engineers new to React Native**,
+> read [docs/CODE_OVERVIEW.md](docs/CODE_OVERVIEW.md). Two feature areas have their
+> own tutorial-style deep-dives: [docs/ACCESSIBILITY.md](docs/ACCESSIBILITY.md)
+> (the WCAG 2.1 AA a11y toolkit) and [docs/LOOKUP.md](docs/LOOKUP.md) (the
+> dictionary + Wikipedia reference-lookup feature). This README covers the whole
+> system end-to-end and stays current with the frontend.
 >
 > **Read [best-practices.md](best-practices.md) before writing any code.** It is
 > the enforced coding standard and CI/review will hold you to it.
@@ -113,9 +115,10 @@ ereader/
 │   ├── EReader.Api/                  ← HTTP layer
 │   │   ├── Auth/                     ← JwtBearerSetup, SwaggerAuthSetup,
 │   │   │                               HttpContextCurrentUserService
-│   │   ├── Controllers/              ← Auth, Users, Books, Search, ReadingSettings
+│   │   ├── Controllers/              ← Auth, Users, Books, Search, Lookup, ReadingSettings
 │   │   ├── Dtos/                     ← request + response shapes (one per file)
 │   │   ├── Middleware/               ← ErrorHandlingMiddleware (exception → JSON)
+│   │   ├── data/dictionary/          ← wordnet.json.gz (offline dictionary dataset)
 │   │   ├── Program.cs                ← composition root (DI + pipeline)
 │   │   ├── appsettings*.json         ← committed config (URLs, JWT lifetimes, …)
 │   │   └── appsettings.*.example.json
@@ -123,6 +126,7 @@ ereader/
 │   │   ├── Auth/                     ← AuthTokens, Issued/Consumed refresh-token records
 │   │   ├── Books/                    ← ParsedEpub, BookAsset, ChapterContent,
 │   │   │                               BookListPage/Sort, SearchHit, BookWithChapters
+│   │   ├── Lookups/                  ← DictionaryResult, WikipediaResult
 │   │   ├── Exceptions/               ← domain exceptions mapped to HTTP by middleware
 │   │   ├── Interfaces/               ← ALL service/repository/adapter contracts
 │   │   ├── Models/                   ← User, Book, Chapter, Annotation, Bookmark,
@@ -131,7 +135,7 @@ ereader/
 │   │   └── Services/                 ← AuthService, UserService, BookService,
 │   │                                   BookIngestionService, SearchService,
 │   │                                   ReadingSettingsService, CredentialValidator,
-│   │                                   AssetUrlRewriter
+│   │                                   AssetUrlRewriter, DictionaryService, WikipediaService
 │   ├── EReader.Data/                 ← adapters
 │   │   ├── Auth/                     ← BCryptPasswordHasher, JwtTokenIssuer,
 │   │   │                               RedisRefreshTokenStore, JwtOptions, RedisOptions
@@ -154,12 +158,15 @@ ereader/
 │   │       └── reader/[bookId].tsx
 │   └── src/
 │       ├── components/               ← AuthImage, TableOfContents, SettingsDrawer,
-│       │                               ConfirmDialog, ReaderWebView(.web).tsx
-│       ├── hooks/                    ← useBooks, useBook, useChapter, useSearch,
+│       │   │                           ConfirmDialog, ReaderWebView(.web).tsx,
+│       │   │                           SelectionMenu, LookupOverlay
+│       │   └── a11y/                 ← AccessibleModal, IconButton, useFocusTrap,
+│       │                               useAnnouncer, SkipToContent, useEscToClose, focusStyles
+│       ├── hooks/                    ← useBooks, useBook, useChapter, useSearch, useLookup,
 │       │                               useUploadBook, useDeleteBook, useReadingSettings
 │       ├── providers/                ← QueryProvider, AuthProvider, ThemeProvider
 │       ├── screens/                  ← Library, Reader, Search, Login, Register
-│       ├── services/                 ← api (axios), auth, books, search,
+│       ├── services/                 ← api (axios), auth, books, search, lookup,
 │       │                               readingSettings, tokenStorage(.web/.native), errors
 │       ├── theme/tokens.ts           ← light/dark color palettes
 │       ├── lib/webviewScripts.ts     ← injected JS for the reader WebView
@@ -169,10 +176,14 @@ ereader/
 │   ├── .env.example                  ← compose vars: DB_PASSWORD + MINIO_*
 │   └── postgres/init.sql             ← ensures DB exists; EF owns the schema
 ├── docs/
-│   ├── CODE_OVERVIEW.md              ← deep backend walk-through (canonical internals doc)
+│   ├── CODE_OVERVIEW.md              ← deep backend walk-through + frontend deep-dive
+│   ├── ACCESSIBILITY.md              ← a11y tutorial (focus traps, live regions, primitives)
+│   ├── LOOKUP.md                     ← dictionary + Wikipedia lookup tutorial (backend→UI)
 │   └── DEV_ENV_SPEC.md               ← original Phase-0 environment spec
 ├── plans/                            ← phase planning docs
-├── scripts/download-test-books.sh    ← fetch sample EPUBs
+├── scripts/
+│   ├── download-test-books.sh        ← fetch sample EPUBs
+│   └── build-dictionary.sh           ← build the offline WordNet dataset (wordnet.json.gz)
 ├── test-books/                       ← sample EPUBs (git-ignored content)
 ├── best-practices.md                 ← ENFORCED coding standards — read first
 ├── CLAUDE.md / .claude/CLAUDE.md     ← agent instructions
@@ -563,6 +574,17 @@ marked **public**. All list endpoints are cursor-paginated.
 |---|---|---|
 | GET | `/search` | Query: `q` (2–256 chars), `bookId` (optional filter), `cursor`, `pageSize` (default 20, max 50). Returns hits with `<mark>` snippets. |
 
+### Lookup — [LookupController](backend/EReader.Api/Controllers/LookupController.cs)
+
+Reference lookups for a selected word/term. **Both always return `200` with a
+`found` flag in the body — "not found" is data, not a 404.** Full detail in
+[docs/LOOKUP.md](docs/LOOKUP.md).
+
+| Verb | Route | Notes |
+|---|---|---|
+| GET | `/lookup/define` | Query: `word`. Offline WordNet dictionary (in-memory). `{ word, found, senses[] }`. Synchronous (no I/O). |
+| GET | `/lookup/wikipedia` | Query: `term`. Proxies Wikipedia's REST summary API via a typed `HttpClient`. `{ term, found, title, extract, pageUrl, thumbnailUrl }`. |
+
 ### Reading settings — [ReadingSettingsController](backend/EReader.Api/Controllers/ReadingSettingsController.cs)
 
 | Verb | Route | Notes |
@@ -585,10 +607,12 @@ mounts the provider stack:
 
 ```
 SafeAreaProvider
-  └─ QueryProvider          (TanStack React Query client)
-       └─ AuthProvider      (session state; needs the query client to clear cache)
-            └─ ThemeProvider (reads global reading-settings once authed)
-                 └─ <Slot /> (routes)
+  └─ QueryProvider              (TanStack React Query client)
+       └─ AuthProvider          (session state; needs the query client to clear cache)
+            └─ ThemeProvider     (reads global reading-settings once authed)
+                 └─ AnnouncerProvider  (app-level a11y live region)
+                      ├─ SkipToContent (web-only "skip to main content" link)
+                      └─ <Slot />       (routes)
 ```
 
 - [app/index.tsx](frontend/app/index.tsx) redirects to `/library` or `/login` by
@@ -663,6 +687,34 @@ mounted. Shared types in
 [AuthImage](frontend/src/components/AuthImage.tsx) exists because cover/asset URLs
 are auth-protected — a plain `<img src>` can't send the Bearer header, so it fetches
 the bytes with axios and renders a blob/object URL.
+
+### Accessibility (WCAG 2.1 AA)
+
+A reusable a11y toolkit lives in [frontend/src/components/a11y/](frontend/src/components/a11y/):
+`AccessibleModal` (the single dialog wrapper — focus trap, Esc-to-close, backdrop
+dismiss, dialog role/`aria-modal`/label, Android back; every overlay renders through
+it), `IconButton` (required accessible `label` + role + state + visible focus ring for
+every glyph button), `useAnnouncer` (an app-level live region — `announce(...)` speaks
+highlights/chapter-changes/lookup results politely and errors assertively),
+`SkipToContent` (the keyboard "skip to main content" link), plus `useFocusTrap`,
+`useEscToClose`, and `focusStyles`. The chapter WebView document also carries
+`<html lang>`, a `prefers-reduced-motion` block, a `role="document"` landmark, and
+ARIA-labelled `<mark>` highlights. Because the app runs on web *and* native, primitives
+**dual-write**: the RN `accessibility*` prop plus raw ARIA under a `Platform.OS === 'web'`
+guard. Full tutorial: [docs/ACCESSIBILITY.md](docs/ACCESSIBILITY.md).
+
+### Reference lookup (dictionary & Wikipedia)
+
+Selecting text in the reader and tapping **Look up** opens
+[LookupOverlay](frontend/src/components/LookupOverlay.tsx) — a transparent bottom-sheet
+(so the reader stays mounted and the scroll position survives) with two independent
+sections: an **offline** WordNet dictionary and an **online** Wikipedia summary, fetched
+by two `enabled`-gated, 5-minute-cached React Query hooks
+([useLookup](frontend/src/hooks/useLookup.ts)). Each section renders a four-way
+**loading / error / found / not-found** matrix — "not found" is a distinct friendly
+state, never an error, mirroring the backend's 200-with-`found`-flag contract. Triggered
+from [SelectionMenu](frontend/src/components/SelectionMenu.tsx). Full tutorial (backend
+to UI): [docs/LOOKUP.md](docs/LOOKUP.md).
 
 ---
 
@@ -809,10 +861,12 @@ docker compose --env-file docker/.env -f docker/docker-compose.yml up -d      # 
   and `MINIO_PASSWORD` (throws at boot otherwise), but `backend/EReader.Api/.env.example`
   doesn't ship them — copy the `MINIO_*` values from `docker/.env` into the
   backend `.env` (or export them) before `dotnet run` (§4 Step 2).
-- **Two docs, two altitudes.** This README is the front door (setup, API surface,
+- **Docs, multiple altitudes.** This README is the front door (setup, API surface,
   high-level map). [docs/CODE_OVERVIEW.md](docs/CODE_OVERVIEW.md) is the deep-dive:
   §3–11 for backend internals, and §12 is a full frontend walk-through written for
-  engineers new to React Native. Keep both in sync when behavior changes.
+  engineers new to React Native (§12.10–12.11 orient on a11y + lookup). Two feature
+  areas get their own tutorial-style docs: [docs/ACCESSIBILITY.md](docs/ACCESSIBILITY.md)
+  and [docs/LOOKUP.md](docs/LOOKUP.md). Keep them in sync when behavior changes.
 - **EPUBs are buffered into memory on both ends.** Upload buffers the whole file
   to hash + persist; serving an asset/cover pulls the object back from MinIO into a
   `MemoryStream` (the zip reader needs random access). Fine for the current few-MB

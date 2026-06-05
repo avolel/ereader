@@ -10,6 +10,13 @@ as a new contributor, or jump to a section as a per-module reference.
 > the ingestion pipeline, EF mapping decisions). **Section 12 is a full frontend
 > deep-dive written for engineers new to React Native / Expo** — if that's you,
 > you can read §12 on its own.
+>
+> Two feature areas have their own dedicated, tutorial-style deep-dives (written
+> for engineers who've never implemented them before):
+> [**ACCESSIBILITY.md**](ACCESSIBILITY.md) (the a11y toolkit — focus traps, live
+> regions, the accessible modal/button primitives) and [**LOOKUP.md**](LOOKUP.md)
+> (the offline dictionary + Wikipedia reference-lookup feature, backend to UI).
+> §12.10 and §12.11 below summarise them and link out.
 
 ---
 
@@ -87,9 +94,10 @@ ereader/
 │   │   ├── Interfaces/     ← All service + repository + adapter contracts
 │   │   ├── Models/         ← User, Book, Chapter, Annotation, Bookmark,
 │   │   │                     ReadingSetting, AnnotationType
+│   │   ├── Lookups/        ← DictionaryResult, WikipediaResult
 │   │   └── Services/       ← AuthService, UserService, BookService,
 │   │                         BookIngestionService, CredentialValidator,
-│   │                         AssetUrlRewriter
+│   │                         AssetUrlRewriter, DictionaryService, WikipediaService
 │   ├── EReader.Data/       ← Adapters
 │   │   ├── Auth/           ← BCryptPasswordHasher, JwtTokenIssuer,
 │   │   │                     JwtOptions, RedisOptions, RedisRefreshTokenStore
@@ -104,8 +112,11 @@ ereader/
 │   ├── app/                ← expo-router file routes (+ (authed) group)
 │   └── src/
 │       ├── screens/        ← Library, Reader, Search, Login, Register
-│       ├── components/     ← ReaderWebView(.web), SettingsDrawer, TOC, AuthImage, ConfirmDialog
-│       ├── hooks/          ← React Query data-fetching hooks
+│       ├── components/     ← ReaderWebView(.web), SettingsDrawer, TOC, AuthImage,
+│       │   │                 ConfirmDialog, SelectionMenu, LookupOverlay
+│       │   └── a11y/       ← AccessibleModal, IconButton, useFocusTrap, useAnnouncer,
+│       │                     SkipToContent, useEscToClose, focusStyles
+│       ├── hooks/          ← React Query data-fetching hooks (incl. useLookup)
 │       ├── providers/      ← Query / Auth / Theme context
 │       ├── services/       ← axios client + endpoint wrappers + tokenStorage
 │       ├── lib/, theme/    ← WebView document builder, color tokens
@@ -819,7 +830,9 @@ SafeAreaProvider          (insets for notches/status bars)
   └─ QueryProvider        (React Query client — server state)
        └─ AuthProvider    (session state; calls useQueryClient, so must be inside)
             └─ ThemeProvider (reads reading-settings via a hook, needs Auth + Query)
-                 └─ <Slot />  (the matched route renders here)
+                 └─ AnnouncerProvider  (app-level a11y live region — §12.10)
+                      ├─ SkipToContent (web-only skip link — §12.10)
+                      └─ <Slot />       (the matched route renders here)
 ```
 
 `<Slot />` is expo-router's "render the current child route" placeholder (like
@@ -1027,7 +1040,98 @@ the backend's `{ error: { code, message } }` envelope (§8) out of an axios erro
 falling back to a generic message. Screens render `extractApiError(query.error).message`
 in their error states, so the UI surfaces the server's own message verbatim.
 
-### 12.10 Gotchas for newcomers
+### 12.10 Accessibility (the `a11y/` toolkit)
+
+> Full tutorial in [ACCESSIBILITY.md](ACCESSIBILITY.md). This is the orientation.
+
+The app targets **WCAG 2.1 AA**. The reusable machinery lives in
+[`src/components/a11y/`](../frontend/src/components/a11y/) and rests on one idea:
+keep the **accessibility tree** (the parallel semantic tree screen readers and
+keyboard navigation actually consume) describing the UI correctly. Because EReader
+runs on web *and* native from one tree, almost every primitive **dual-writes**: it
+sets the React Native `accessibility*` prop (for native) and *also* spreads raw ARIA
+attributes under a `Platform.OS === 'web'` guard for what RNW doesn't cover.
+
+The toolkit:
+
+- **[IconButton](../frontend/src/components/a11y/IconButton.tsx)** — the accessible
+  button contract in one place: a **required** `label` (the visible child is usually a
+  bare glyph with no readable name), a role, `accessibilityState` (disabled/selected/
+  busy), an expanded touch target, and a visible focus ring. Every chrome button goes
+  through it, so an icon button can't ship label-less.
+- **[focusStyles](../frontend/src/components/a11y/focusStyles.ts)** — the web-only
+  visible focus ring (WCAG 2.4.7). Applied imperatively while a `focused` flag is true,
+  because you can't express `:focus-visible` from an inline RNW style.
+- **[useFocusTrap](../frontend/src/components/a11y/useFocusTrap.ts)** — web-only: keeps
+  Tab/Shift+Tab cycling inside an open dialog and restores focus to the trigger on
+  close (no-op on native, where RN `<Modal>` handles it). The intricate one — read the
+  dedicated doc.
+- **[useEscToClose](../frontend/src/components/a11y/useEscToClose.ts)** — Escape
+  dismisses overlays (document-level listener; native back routes through `<Modal>`).
+- **[AccessibleModal](../frontend/src/components/a11y/AccessibleModal.tsx)** — the
+  keystone. Replaces the hand-rolled "Modal + backdrop Pressable + inner tap-absorb"
+  pattern that was duplicated across **eight** overlays. Wires focus trap + Esc +
+  backdrop dismiss + dialog semantics (`role`/`aria-modal`/`aria-label` on web,
+  `accessibilityViewIsModal` on native) + the Android back button. Every overlay
+  (`SettingsDrawer`, `TableOfContents`, `AnnotationsDrawer`, `ConfirmDialog`,
+  `SelectionMenu`, `AnnotationPopover`, `NoteEditor`, `LookupOverlay`) renders through
+  it. **Never hand-roll `<Modal>` again.**
+- **[useAnnouncer](../frontend/src/components/a11y/useAnnouncer.tsx)** — an app-level
+  **live region** (mounted once in `app/_layout.tsx`). `announce(msg, assertive?)`
+  speaks things that happen without a visible focus change — "Highlight added", chapter
+  changes, lookup results (polite) and errors (assertive). It clears-then-sets on the
+  next frame so re-announcing an identical string still re-reads, and stays in the
+  accessibility tree via a clipped 1×1 box (not `display:none`).
+- **[SkipToContent](../frontend/src/components/a11y/SkipToContent.tsx)** — web-only
+  "skip to main content" link (WCAG 2.4.1), the first focusable element; targets the
+  screen's `nativeID="main-content"` / `role="main"` container.
+
+Inside the chapter WebView, [webviewScripts.ts](../frontend/src/lib/webviewScripts.ts)
+injects its own a11y: `<html lang>`, a `prefers-reduced-motion` block that drops the
+highlight flash, a `role="document"` content landmark, and `tabindex`/`aria-label` on
+each `<mark>` highlight. The reader's keyboard shortcuts (←/→ paging) self-guard
+against firing while a modal is open or focus is in a text field.
+
+The contracts to honour when extending: route every button through `IconButton`, every
+overlay through `AccessibleModal`, `announce(...)` anything that resolves without focus
+moving, and tag each screen's main region `nativeID="main-content"` + `role="main"`.
+
+### 12.11 Reference lookup (dictionary & Wikipedia)
+
+> Full tutorial in [LOOKUP.md](LOOKUP.md), backend to UI. This is the orientation.
+
+Select text in the reader → **Look up** → an overlay with an **offline dictionary**
+definition and an **online Wikipedia** summary, stacked. Two deliberately different
+data strategies:
+
+- **Dictionary** — a WordNet dataset bundled with the backend
+  (`data/dictionary/wordnet.json.gz`, ~6.6 MB gzipped), streamed through a `GZipStream`
+  into an in-memory index at startup by
+  [DictionaryService](../backend/EReader.Core/Services/DictionaryService.cs).
+  Registered **singleton** (load once, read forever; immutable, so safe to share).
+- **Wikipedia** — [WikipediaService](../backend/EReader.Core/Services/WikipediaService.cs)
+  proxies Wikipedia's REST summary API via a **typed `HttpClient`** (the codebase's
+  first `IHttpClientFactory` use), with base address, required `User-Agent`, and a 10s
+  timeout configured in `Program.cs`. Parses the payload defensively with
+  `JsonDocument` + `TryGetProperty`.
+
+The load-bearing design rule: **"not found" is a normal 200, not a 404.** Both
+[LookupController](../backend/EReader.Api/Controllers/LookupController.cs) actions
+return `Ok(...)` unconditionally with a `found: boolean` in the body — a missing word
+or article is data, not an error. (`Define` is synchronous — pure in-memory; `Wikipedia`
+is async — real I/O.) The dictionary normalises the raw selected prose server-side
+(first token, strip punctuation, lower-case), so the client can stay dumb.
+
+Frontend: thin wrappers in [services/lookup.ts](../frontend/src/services/lookup.ts),
+two `enabled`-gated React Query hooks with a 5-minute `staleTime`
+([useLookup.ts](../frontend/src/hooks/useLookup.ts)), and
+[LookupOverlay](../frontend/src/components/LookupOverlay.tsx) — a transparent
+bottom-sheet (so the reader stays mounted and the scroll position survives, FR-28) that
+renders each section through a four-way **loading / error / found / not-found** matrix
+and announces the dictionary outcome for screen readers. The trigger is the reader's
+[SelectionMenu](../frontend/src/components/SelectionMenu.tsx) "Look up" action.
+
+### 12.12 Gotchas for newcomers
 
 - **All text needs a `<Text>`.** A bare string in a `<View>` throws on native.
 - **`flexDirection` defaults to `column`.** Reach for `'row'` explicitly.
@@ -1039,8 +1143,14 @@ in their error states, so the UI surfaces the server's own message verbatim.
   base file in sync.
 - **`process.env.EXPO_PUBLIC_*`** is the only env convention that reaches the
   client bundle — `EXPO_PUBLIC_API_URL` points the app at the backend.
+- **Don't hand-roll a `<Modal>` or a bare-glyph `<Pressable>`.** Use
+  `AccessibleModal` and `IconButton` from `components/a11y/` — they carry the focus,
+  Esc, role/label, and focus-ring contracts. See [ACCESSIBILITY.md](ACCESSIBILITY.md).
+- **Lookup endpoints return 200 for "not found"** (a `found` flag in the body), never
+  404 — handle the not-found state separately from the error state. See
+  [LOOKUP.md](LOOKUP.md).
 
-### 12.11 Testing & tooling recap
+### 12.13 Testing & tooling recap
 
 - **Jest + React Native Testing Library** for unit/component tests (`npm test`).
   Query by role/text/label, never test IDs; test hooks with `renderHook`.
