@@ -1,5 +1,13 @@
-import { useEffect } from 'react';
-import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import {
+  Dimensions,
+  Modal,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+  type LayoutChangeEvent,
+} from 'react-native';
 
 import { useTheme } from '../providers/ThemeProvider';
 import type { DOMRectLike } from './ReaderWebView';
@@ -22,6 +30,7 @@ type Props = {
   onHighlight: (colour: HighlightColour) => void;
   onAddNote: () => void;
   onBookmark: () => void;
+  onLookup: () => void;
   onClose: () => void;
 };
 
@@ -32,6 +41,7 @@ export default function SelectionMenu({
   onHighlight,
   onAddNote,
   onBookmark,
+  onLookup,
   onClose,
 }: Props) {
   const { colors } = useTheme();
@@ -47,19 +57,44 @@ export default function SelectionMenu({
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  // Anchor the popover above the selection; clamp the top so it never goes
-  // off-screen when the selection is near the very top of the viewport.
-  const top = Math.max(8, rect.y - 56);
-  const left = Math.max(8, rect.x);
+  // The panel width/height depend on content, so we measure it on first layout
+  // and clamp against the viewport on the next render. Until measured we hide it
+  // (opacity 0) to avoid a visible jump from an unclamped position.
+  const [size, setSize] = useState<{ width: number; height: number } | null>(null);
+  function onLayout(e: LayoutChangeEvent) {
+    const { width, height } = e.nativeEvent.layout;
+    if (!size || size.width !== width || size.height !== height) {
+      setSize({ width, height });
+    }
+  }
+
+  // Anchor the popover above the selection, then clamp all four edges so it
+  // stays fully on-screen — left/top minimums plus right/bottom maximums (the
+  // latter need the measured panel size). Prefer above the selection; if there
+  // isn't room, drop below it.
+  const MARGIN = 8;
+  const { width: vw, height: vh } = Dimensions.get('window');
+
+  let top = rect.y - 56;
+  let left = rect.x;
+  if (size) {
+    if (top < MARGIN) top = rect.y + rect.height + MARGIN; // no room above → go below
+    top = Math.min(top, vh - size.height - MARGIN);
+    left = Math.min(left, vw - size.width - MARGIN);
+  }
+  top = Math.max(MARGIN, top);
+  left = Math.max(MARGIN, left);
 
   return (
     <Modal visible transparent animationType="fade" onRequestClose={onClose}>
       <Pressable style={styles.backdrop} onPress={onClose}>
         <Pressable
           onPress={() => {}}
+          onLayout={onLayout}
           style={[
             styles.panel,
             { top, left, backgroundColor: colors.surface, borderColor: colors.border },
+            size ? null : styles.hidden,
           ]}
         >
           <View style={styles.swatchRow}>
@@ -93,6 +128,15 @@ export default function SelectionMenu({
           >
             <Text style={{ color: colors.accent, fontSize: 14 }}>Bookmark</Text>
           </Pressable>
+          <Pressable
+            onPress={onLookup}
+            accessibilityRole="button"
+            accessibilityLabel="Look up"
+            focusable
+            style={styles.action}
+          >
+            <Text style={{ color: colors.accent, fontSize: 14 }}>Look up</Text>
+          </Pressable>
         </Pressable>
       </Pressable>
     </Modal>
@@ -111,6 +155,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     gap: 8,
   },
+  hidden: { opacity: 0 },
   swatchRow: { flexDirection: 'row', gap: 6 },
   swatch: { width: 22, height: 22, borderRadius: 11 },
   divider: { width: 1, height: 24, marginHorizontal: 4 },

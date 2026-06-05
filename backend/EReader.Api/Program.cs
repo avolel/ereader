@@ -113,6 +113,25 @@ builder.Services.AddScoped<ISearchService, SearchService>();
 builder.Services.AddScoped<IReadingSettingsRepository, ReadingSettingsRepository>();
 builder.Services.AddScoped<IReadingSettingsService, ReadingSettingsService>();
 
+// Dictionary: singleton — dataset loaded once into memory at startup.
+builder.Services
+    .AddOptions<DictionaryOptions>()
+    .Bind(builder.Configuration.GetSection(DictionaryOptions.SectionName));
+// DictionaryService takes a plain DictionaryOptions (EReader.Core has no IOptions
+// dependency by design), so unwrap the bound options value here.
+builder.Services.AddSingleton<IDictionaryService>(sp =>
+    new DictionaryService(sp.GetRequiredService<IOptions<DictionaryOptions>>().Value));
+
+// Wikipedia: typed HttpClient (first IHttpClientFactory use in the codebase).
+builder.Services.AddHttpClient<IWikipediaService, WikipediaService>(client =>
+{
+    var baseUrl = builder.Configuration["WikipediaApiBase"]
+        ?? "https://en.wikipedia.org/api/rest_v1";
+    client.BaseAddress = new Uri(baseUrl.TrimEnd('/') + "/");
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("EReader/1.0 (coding-challenge-109)");
+    client.Timeout = TimeSpan.FromSeconds(10);
+});
+
 // Dev-only CORS so the Expo web dev server (localhost:8081 by default) can hit the API.
 // Production CORS is intentionally not configured here — set per-environment when we ship.
 if (builder.Environment.IsDevelopment())

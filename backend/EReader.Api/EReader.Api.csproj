@@ -22,4 +22,10 @@
     <ProjectReference Include="..\EReader.Data\EReader.Data.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Content Include="data/dictionary/wordnet.json.gz">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
 </Project>
