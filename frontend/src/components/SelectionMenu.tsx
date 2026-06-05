@@ -1,14 +1,14 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import {
   Dimensions,
-  Modal,
-  Pressable,
   StyleSheet,
   Text,
   View,
   type LayoutChangeEvent,
 } from 'react-native';
 
+import AccessibleModal from './a11y/AccessibleModal';
+import IconButton from './a11y/IconButton';
 import { useTheme } from '../providers/ThemeProvider';
 import type { DOMRectLike } from './ReaderWebView';
 import { HighlightColour } from '../types';
@@ -46,17 +46,6 @@ export default function SelectionMenu({
 }: Props) {
   const { colors } = useTheme();
 
-  // Keyboard dismissal. On web the Modal's onRequestClose doesn't fire for Esc,
-  // so we listen directly. Guarded for native, where `document` is undefined.
-  useEffect(() => {
-    if (typeof document === 'undefined') return;
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose();
-    }
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
   // The panel width/height depend on content, so we measure it on first layout
   // and clamp against the viewport on the next render. Until measured we hide it
   // (opacity 0) to avoid a visible jump from an unclamped position.
@@ -86,65 +75,48 @@ export default function SelectionMenu({
   left = Math.max(MARGIN, left);
 
   return (
-    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable style={styles.backdrop} onPress={onClose}>
-        <Pressable
-          onPress={() => {}}
-          onLayout={onLayout}
-          style={[
-            styles.panel,
-            { top, left, backgroundColor: colors.surface, borderColor: colors.border },
-            size ? null : styles.hidden,
-          ]}
-        >
-          <View style={styles.swatchRow}>
-            {COLOURS.map((c) => (
-              <Pressable
-                key={c}
-                accessibilityRole="button"
-                accessibilityLabel={`Highlight ${c}`}
-                focusable
-                onPress={() => onHighlight(c)}
-                style={[styles.swatch, { backgroundColor: HIGHLIGHT_SWATCHES[c] }]}
-              />
-            ))}
-          </View>
-          <View style={[styles.divider, { backgroundColor: colors.border }]} />
-          <Pressable
-            onPress={onAddNote}
-            accessibilityRole="button"
-            accessibilityLabel="Add note"
-            focusable
-            style={styles.action}
-          >
-            <Text style={{ color: colors.accent, fontSize: 14 }}>Add note</Text>
-          </Pressable>
-          <Pressable
-            onPress={onBookmark}
-            accessibilityRole="button"
-            accessibilityLabel="Bookmark"
-            focusable
-            style={styles.action}
-          >
-            <Text style={{ color: colors.accent, fontSize: 14 }}>Bookmark</Text>
-          </Pressable>
-          <Pressable
-            onPress={onLookup}
-            accessibilityRole="button"
-            accessibilityLabel="Look up"
-            focusable
-            style={styles.action}
-          >
-            <Text style={{ color: colors.accent, fontSize: 14 }}>Look up</Text>
-          </Pressable>
-        </Pressable>
-      </Pressable>
-    </Modal>
+    <AccessibleModal
+      visible
+      onClose={onClose}
+      label="Selection actions"
+      align="custom"
+      dimmed={false}
+      panelStyle={[
+        styles.panel,
+        { top, left, backgroundColor: colors.surface, borderColor: colors.border },
+        size ? null : styles.hidden,
+      ]}
+    >
+      {/* Inner view carries onLayout — AccessibleModal owns the panel Pressable,
+          so we measure the content (≈panel size minus padding) for clamping. */}
+      <View onLayout={onLayout} style={styles.inner}>
+        <View style={styles.swatchRow}>
+          {COLOURS.map((c) => (
+            <IconButton
+              key={c}
+              label={`Highlight ${c}`}
+              onPress={() => onHighlight(c)}
+              style={[styles.swatch, { backgroundColor: HIGHLIGHT_SWATCHES[c] }]}
+            />
+          ))}
+        </View>
+        <View style={[styles.divider, { backgroundColor: colors.border }]} />
+        <IconButton label="Add note" onPress={onAddNote} style={styles.action}>
+          <Text style={{ color: colors.accent, fontSize: 14 }}>Add note</Text>
+        </IconButton>
+        <IconButton label="Bookmark" onPress={onBookmark} style={styles.action}>
+          <Text style={{ color: colors.accent, fontSize: 14 }}>Bookmark</Text>
+        </IconButton>
+        <IconButton label="Look up" onPress={onLookup} style={styles.action}>
+          <Text style={{ color: colors.accent, fontSize: 14 }}>Look up</Text>
+        </IconButton>
+      </View>
+    </AccessibleModal>
   );
 }
 
 const styles = StyleSheet.create({
-  backdrop: { flex: 1 },
+  inner: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   panel: {
     position: 'absolute',
     flexDirection: 'row',

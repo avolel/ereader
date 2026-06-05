@@ -23,6 +23,12 @@ jest.mock('../../providers/ThemeProvider', () => ({
 // can pose the section in a specific state without a real fetch.
 jest.mock('../../hooks/useLookup');
 
+// The overlay announces lookup results; stub the announcer so the test doesn't
+// need the provider (and so we could assert on it later if desired).
+jest.mock('../a11y/useAnnouncer', () => ({
+  useAnnouncer: () => ({ announce: jest.fn() }),
+}));
+
 const mockUseDictionary = useLookup.useDictionary as jest.Mock;
 const mockUseWikipedia = useLookup.useWikipedia as jest.Mock;
 

@@ -1,5 +1,7 @@
-import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import AccessibleModal from './a11y/AccessibleModal';
+import IconButton from './a11y/IconButton';
 import { useThemeContext } from '../providers/ThemeProvider';
 import { ReadingSettingUpdate, ThemeMode } from '../types';
 
@@ -46,100 +48,116 @@ export default function SettingsDrawer({ visible, onClose }: Props) {
   }
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={styles.backdrop} onPress={onClose}>
-        <Pressable
-          onPress={() => {}}
-          style={[
-            styles.panel,
-            { backgroundColor: colors.surface, borderColor: colors.border },
-          ]}
-        >
-          <View style={[styles.header, { borderBottomColor: colors.border }]}>
-            <Text style={[styles.title, { color: colors.text }]}>Display</Text>
-            <Pressable onPress={onClose} accessibilityLabel="Close settings">
-              <Text style={{ color: colors.accent, fontSize: 16 }}>Done</Text>
-            </Pressable>
-          </View>
+    <AccessibleModal
+      visible={visible}
+      onClose={onClose}
+      label="Display settings"
+      animationType="slide"
+      align="bottom"
+      panelStyle={[styles.panel, { backgroundColor: colors.surface, borderColor: colors.border }]}
+    >
+      <View style={[styles.header, { borderBottomColor: colors.border }]}>
+        <Text style={[styles.title, { color: colors.text }]} accessibilityRole="header">
+          Display
+        </Text>
+        <IconButton label="Close settings" onPress={onClose}>
+          <Text style={{ color: colors.accent, fontSize: 16 }}>Done</Text>
+        </IconButton>
+      </View>
 
-          <ScrollView contentContainerStyle={styles.body}>
-            <Section title="Theme" colors={colors}>
-              <ChipRow
-                options={THEME_OPTIONS}
-                value={globalSetting.theme}
-                onSelect={(v) => set({ theme: v as ThemeMode })}
-                colors={colors}
-              />
-            </Section>
+      <ScrollView contentContainerStyle={styles.body}>
+        <Section title="Theme" colors={colors}>
+          <ChipRow
+            groupLabel="Theme"
+            options={THEME_OPTIONS}
+            value={globalSetting.theme}
+            onSelect={(v) => set({ theme: v as ThemeMode })}
+            colors={colors}
+          />
+        </Section>
 
-            <Section title="Font" colors={colors}>
-              <ChipRow
-                options={FONT_OPTIONS}
-                value={globalSetting.fontFamily}
-                onSelect={(v) => set({ fontFamily: v })}
-                colors={colors}
-              />
-            </Section>
+        <Section title="Font" colors={colors}>
+          <ChipRow
+            groupLabel="Font"
+            options={FONT_OPTIONS}
+            value={globalSetting.fontFamily}
+            onSelect={(v) => set({ fontFamily: v })}
+            colors={colors}
+          />
+        </Section>
 
-            <Section title={`Size — ${globalSetting.fontSize}px`} colors={colors}>
-              <ChipRow
-                options={FONT_SIZES.map((n) => ({ label: String(n), value: n }))}
-                value={globalSetting.fontSize}
-                onSelect={(v) => set({ fontSize: v as number })}
-                colors={colors}
-              />
-            </Section>
+        <Section title={`Size — ${globalSetting.fontSize}px`} colors={colors}>
+          <ChipRow
+            groupLabel="Font size"
+            options={FONT_SIZES.map((n) => ({ label: String(n), value: n }))}
+            value={globalSetting.fontSize}
+            onSelect={(v) => set({ fontSize: v as number })}
+            colors={colors}
+          />
+        </Section>
 
-            <Section title={`Line spacing — ${globalSetting.lineSpacing.toFixed(1)}`} colors={colors}>
-              <ChipRow
-                options={LINE_SPACINGS}
-                value={Number(globalSetting.lineSpacing.toFixed(1))}
-                onSelect={(v) => set({ lineSpacing: v as number })}
-                colors={colors}
-              />
-            </Section>
+        <Section title={`Line spacing — ${globalSetting.lineSpacing.toFixed(1)}`} colors={colors}>
+          <ChipRow
+            groupLabel="Line spacing"
+            options={LINE_SPACINGS}
+            value={Number(globalSetting.lineSpacing.toFixed(1))}
+            onSelect={(v) => set({ lineSpacing: v as number })}
+            colors={colors}
+          />
+        </Section>
 
-            <Section title="Margins" colors={colors}>
-              <ChipRow
-                options={MARGIN_PRESETS.map((p) => ({ label: p.label, value: p.label }))}
-                value={
-                  MARGIN_PRESETS.find(
-                    (p) =>
-                      p.h === globalSetting.marginHorizontal &&
-                      p.v === globalSetting.marginVertical,
-                  )?.label ?? 'Medium'
-                }
-                onSelect={(label) => {
-                  const preset = MARGIN_PRESETS.find((p) => p.label === label);
-                  if (preset) set({ marginHorizontal: preset.h, marginVertical: preset.v });
-                }}
-                colors={colors}
-              />
-            </Section>
-          </ScrollView>
-        </Pressable>
-      </Pressable>
-    </Modal>
+        <Section title="Margins" colors={colors}>
+          <ChipRow
+            groupLabel="Margins"
+            options={MARGIN_PRESETS.map((p) => ({ label: p.label, value: p.label }))}
+            value={
+              MARGIN_PRESETS.find(
+                (p) =>
+                  p.h === globalSetting.marginHorizontal &&
+                  p.v === globalSetting.marginVertical,
+              )?.label ?? 'Medium'
+            }
+            onSelect={(label) => {
+              const preset = MARGIN_PRESETS.find((p) => p.label === label);
+              if (preset) set({ marginHorizontal: preset.h, marginVertical: preset.v });
+            }}
+            colors={colors}
+          />
+        </Section>
+      </ScrollView>
+    </AccessibleModal>
   );
 }
 
 type ChipOption<T extends string | number> = { label: string; value: T };
 
 type ChipRowProps<T extends string | number> = {
+  // Accessible name for the radiogroup (the setting being chosen).
+  groupLabel: string;
   options: ChipOption<T>[];
   value: T;
   onSelect: (value: T) => void;
   colors: ReturnType<typeof useThemeContext>['theme']['colors'];
 };
 
-function ChipRow<T extends string | number>({ options, value, onSelect, colors }: ChipRowProps<T>) {
+function ChipRow<T extends string | number>({
+  groupLabel,
+  options,
+  value,
+  onSelect,
+  colors,
+}: ChipRowProps<T>) {
   return (
-    <View style={styles.chipRow}>
+    <View style={styles.chipRow} accessibilityRole="radiogroup" accessibilityLabel={groupLabel}>
       {options.map((opt) => {
         const active = opt.value === value;
         return (
-          <Pressable
+          <IconButton
             key={String(opt.value)}
+            // Active chip was colour-only before; selected state now reaches AT.
+            label={opt.label}
+            accessibilityRole="radio"
+            selected={active}
             onPress={() => onSelect(opt.value)}
             style={[
               styles.chip,
@@ -150,7 +168,7 @@ function ChipRow<T extends string | number>({ options, value, onSelect, colors }
             ]}
           >
             <Text style={{ color: active ? '#fff' : colors.text, fontSize: 13 }}>{opt.label}</Text>
-          </Pressable>
+          </IconButton>
         );
       })}
     </View>
@@ -173,7 +191,6 @@ function Section({ title, colors, children }: SectionProps) {
 }
 
 const styles = StyleSheet.create({
-  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
   panel: {
     maxHeight: '80%',
     borderTopLeftRadius: 12,

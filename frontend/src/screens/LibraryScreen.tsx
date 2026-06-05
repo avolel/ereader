@@ -5,7 +5,6 @@ import {
   ActivityIndicator,
   FlatList,
   Platform,
-  Pressable,
   StyleSheet,
   Text,
   TextInput,
@@ -15,6 +14,8 @@ import {
 
 import AuthImage from '../components/AuthImage';
 import ConfirmDialog from '../components/ConfirmDialog';
+import IconButton from '../components/a11y/IconButton';
+import { useAnnouncer } from '../components/a11y/useAnnouncer';
 import { useDeleteBook } from '../hooks/useDeleteBook';
 import { useBooks } from '../hooks/useBooks';
 import { useUploadBook } from '../hooks/useUploadBook';
@@ -38,6 +39,7 @@ const SORT_OPTIONS: SortOption[] = [
 
 export default function LibraryScreen() {
   const theme = useTheme();
+  const { announce } = useAnnouncer();
   const router = useRouter();
   const { logout, user } = useAuth();
   const { width } = useWindowDimensions();
@@ -81,6 +83,7 @@ export default function LibraryScreen() {
     if (result.canceled || !result.assets?.[0]) return;
     const asset = result.assets[0];
 
+    announce('Importing book…');
     try {
       if (Platform.OS === 'web' && asset.file) {
         await uploadMutation.mutateAsync({ kind: 'web', file: asset.file });
@@ -92,39 +95,50 @@ export default function LibraryScreen() {
           mimeType: asset.mimeType ?? 'application/epub+zip',
         });
       }
+      announce('Book imported');
     } catch {
-      // Surface via the mutation's error state below — no need to handle here.
+      // Surface via the mutation's error state below — also announce assertively.
+      announce('Import failed', true);
     }
   }
 
   const uploadError = uploadMutation.isError ? extractApiError(uploadMutation.error).message : null;
 
   return (
-    <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
+    <View
+      style={[styles.container, { backgroundColor: theme.colors.background }]}
+      nativeID="main-content"
+      role="main"
+    >
       <View style={[styles.header, { borderBottomColor: theme.colors.border }]}>
-        <Text style={[styles.title, { color: theme.colors.text }]}>Library</Text>
+        <Text style={[styles.title, { color: theme.colors.text }]} accessibilityRole="header">
+          Library
+        </Text>
         <View style={styles.headerRight}>
-          <Pressable
+          <IconButton
+            label="Search library"
             onPress={() => router.push('/(authed)/search')}
-            accessibilityLabel="Search library"
             style={{ marginRight: 16 }}
           >
             <Text style={{ color: theme.colors.accent }}>Search</Text>
-          </Pressable>
+          </IconButton>
           {user && <Text style={{ color: theme.colors.textMuted, marginRight: 12 }}>{user.username}</Text>}
-          <Pressable onPress={() => void logout()}>
+          <IconButton label="Sign out" onPress={() => void logout()}>
             <Text style={{ color: theme.colors.accent }}>Sign out</Text>
-          </Pressable>
+          </IconButton>
         </View>
       </View>
 
       <View style={[styles.toolbar, { borderBottomColor: theme.colors.border }]}>
-        <View style={styles.sortRow}>
+        <View style={styles.sortRow} accessibilityRole="radiogroup" accessibilityLabel="Sort by">
           {SORT_OPTIONS.map((opt, idx) => {
             const active = idx === sortIndex;
             return (
-              <Pressable
+              <IconButton
                 key={opt.label}
+                label={opt.label}
+                accessibilityRole="radio"
+                selected={active}
                 onPress={() => setSortIndex(idx)}
                 style={[
                   styles.chip,
@@ -137,7 +151,7 @@ export default function LibraryScreen() {
                 <Text style={{ color: active ? '#fff' : theme.colors.text, fontSize: 13 }}>
                   {opt.label}
                 </Text>
-              </Pressable>
+              </IconButton>
             );
           })}
         </View>
@@ -145,6 +159,7 @@ export default function LibraryScreen() {
           style={[styles.filterInput, { borderColor: theme.colors.border, color: theme.colors.text }]}
           placeholder="Filter by author"
           placeholderTextColor={theme.colors.textMuted}
+          accessibilityLabel="Filter by author"
           value={authorFilter}
           onChangeText={setAuthorFilter}
           onSubmitEditing={() => setCommittedAuthor(authorFilter.trim())}
@@ -181,6 +196,7 @@ export default function LibraryScreen() {
           data={items}
           keyExtractor={(b) => b.id}
           numColumns={numColumns}
+          accessibilityRole="list"
           contentContainerStyle={styles.gridContent}
           columnWrapperStyle={numColumns > 1 ? { gap: COVER_GAP } : undefined}
           ItemSeparatorComponent={() => <View style={{ height: COVER_GAP }} />}
@@ -213,9 +229,11 @@ export default function LibraryScreen() {
         />
       )}
 
-      <Pressable
+      <IconButton
+        label="Import EPUB"
         onPress={onUpload}
         disabled={uploadMutation.isPending}
+        busy={uploadMutation.isPending}
         style={[
           styles.fab,
           { backgroundColor: theme.colors.accent, opacity: uploadMutation.isPending ? 0.6 : 1 },
@@ -226,7 +244,7 @@ export default function LibraryScreen() {
         ) : (
           <Text style={styles.fabIcon}>+</Text>
         )}
-      </Pressable>
+      </IconButton>
 
       <ConfirmDialog
         visible={pendingDelete !== null}
@@ -262,11 +280,11 @@ function BookCard({ book, width, onPress, onRequestDelete }: BookCardProps) {
   const coverHeight = width / COVER_ASPECT;
   return (
     <View style={{ width }}>
-      <Pressable
+      <IconButton
+        label={`Open ${book.title} by ${book.author}`}
         onPress={onPress}
         onLongPress={onRequestDelete}
-        accessibilityLabel={`Open ${book.title}`}
-        style={({ pressed }) => [{ opacity: pressed ? 0.85 : 1 }]}
+        accessibilityHint="Opens the book"
       >
         <AuthImage
           url={absoluteCoverUrl(book.coverUrl)}
@@ -285,16 +303,16 @@ function BookCard({ book, width, onPress, onRequestDelete }: BookCardProps) {
         <Text style={[styles.bookAuthor, { color: theme.colors.textMuted }]} numberOfLines={1}>
           {book.author}
         </Text>
-      </Pressable>
+      </IconButton>
 
-      <Pressable
+      <IconButton
+        label={`Delete ${book.title}`}
         onPress={onRequestDelete}
-        accessibilityLabel={`Delete ${book.title}`}
         hitSlop={8}
         style={styles.overflowButton}
       >
         <Text style={styles.overflowIcon}>⋯</Text>
-      </Pressable>
+      </IconButton>
     </View>
   );
 }

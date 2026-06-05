@@ -2,6 +2,8 @@ import { Slot } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
+import SkipToContent from '../src/components/a11y/SkipToContent';
+import { AnnouncerProvider } from '../src/components/a11y/useAnnouncer';
 import AuthProvider from '../src/providers/AuthProvider';
 import QueryProvider from '../src/providers/QueryProvider';
 import ThemeProvider from '../src/providers/ThemeProvider';
@@ -15,8 +17,11 @@ export default function RootLayout() {
       <QueryProvider>
         <AuthProvider>
           <ThemeProvider>
-            <Slot />
-            <StatusBar style="auto" />
+            <AnnouncerProvider>
+              <SkipToContent />
+              <Slot />
+              <StatusBar style="auto" />
+            </AnnouncerProvider>
           </ThemeProvider>
         </AuthProvider>
       </QueryProvider>

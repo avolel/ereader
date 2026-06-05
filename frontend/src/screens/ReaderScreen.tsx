@@ -2,12 +2,14 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Pressable,
+  Platform,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
 
+import IconButton from '../components/a11y/IconButton';
+import { useAnnouncer } from '../components/a11y/useAnnouncer';
 import ReaderWebView, {
   ReaderWebViewHandle,
   ReaderWebViewMessage,
@@ -45,6 +47,7 @@ export default function ReaderScreen() {
   const anchor = params.anchor;
 
   const { colors } = useTheme();
+  const { announce } = useAnnouncer();
   const bookQuery = useBook(bookId);
   const settingsQuery = useBookSettings(bookId);
   const bookmarksQuery = useBookmarks(bookId);
@@ -140,6 +143,8 @@ export default function ReaderScreen() {
         anchor: JSON.parse(a.textAnchor) as TextAnchor,
         // Notes carry colour: null; give their mark a default swatch.
         colour: (a.colour ?? 'yellow') as HighlightColour,
+        // Drives the "has note" suffix in the mark's screen-reader label.
+        hasNote: !!a.noteBody,
       }));
   }, [annotationsQuery.data, currentChapterId]);
 
@@ -185,15 +190,71 @@ export default function ReaderScreen() {
     setTocOpen(false);
   }, []);
 
-  function goPrev() {
+  // Memoized so the keyboard-shortcut effect below can depend on them without
+  // re-subscribing the document listener on every render.
+  const goPrev = useCallback(() => {
     if (!bookQuery.data || currentSpineIndex <= 0) return;
     goToChapter(bookQuery.data.toc[currentSpineIndex - 1].chapterId);
-  }
-  function goNext() {
+  }, [bookQuery.data, currentSpineIndex, goToChapter]);
+  const goNext = useCallback(() => {
     if (!bookQuery.data || currentSpineIndex < 0) return;
     const next = bookQuery.data.toc[currentSpineIndex + 1];
     if (next) goToChapter(next.chapterId);
-  }
+  }, [bookQuery.data, currentSpineIndex, goToChapter]);
+
+  // On a *chapter change* (not the first paint), move focus into the chapter body
+  // and announce the new chapter for screen readers (FR-32). Gated on webViewReady
+  // so #er-content exists before we focus it.
+  const announcedChapterRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!webViewReady || !currentChapterId || !bookQuery.data) return;
+    if (announcedChapterRef.current === currentChapterId) return;
+    const isFirst = announcedChapterRef.current === null;
+    announcedChapterRef.current = currentChapterId;
+    if (isFirst) return; // don't yank focus / announce on initial open
+    const toc = bookQuery.data.toc;
+    const idx = toc.findIndex((c) => c.chapterId === currentChapterId);
+    const entry = idx >= 0 ? toc[idx] : null;
+    const title = entry?.title ?? (entry ? `Chapter ${entry.spineOrder + 1}` : 'Chapter');
+    webRef.current?.focusContent();
+    announce(`${title}, chapter ${idx + 1} of ${toc.length}`);
+  }, [webViewReady, currentChapterId, bookQuery.data, announce]);
+
+  // Announce chapter load failures assertively so AT users aren't left on a
+  // silent blank screen.
+  useEffect(() => {
+    if (chapterQuery.isError) announce('Failed to load chapter', true);
+  }, [chapterQuery.isError, announce]);
+
+  // Reader keyboard shortcuts (web only, FR-29). Arrow/Page keys page chapters.
+  // Bail when a modal is open or focus is in a text field so we don't hijack
+  // typing or compete with an overlay's own keys. Note: when focus is inside the
+  // chapter iframe these don't fire (events don't cross the frame), so the iframe
+  // keeps its native arrow-scroll there — intentional.
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof document === 'undefined') return;
+    const modalOpen =
+      tocOpen || settingsOpen || annotationsOpen || confirmDelete ||
+      !!selection || !!activeHighlight || !!noteEditor || !!lookupTerm;
+    if (modalOpen) return;
+    function onKey(e: KeyboardEvent) {
+      const t = document.activeElement as HTMLElement | null;
+      const tag = t?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || t?.isContentEditable) return;
+      if (e.key === 'ArrowLeft' || e.key === 'PageUp') {
+        e.preventDefault();
+        goPrev();
+      } else if (e.key === 'ArrowRight' || e.key === 'PageDown') {
+        e.preventDefault();
+        goNext();
+      }
+    }
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [
+    goPrev, goNext, tocOpen, settingsOpen, annotationsOpen, confirmDelete,
+    selection, activeHighlight, noteEditor, lookupTerm,
+  ]);
 
   // Debounced position persistence. The WebView already throttles its scroll
   // reports; we layer one more debounce on top so chapter scroll → API request
@@ -240,6 +301,7 @@ export default function ReaderScreen() {
       noteBody: null,
     });
     setSelection(null);
+    announce(`${colour} highlight added`);
   }
 
   // "Add note" from the selection menu: stash the selection and open the editor.
@@ -268,9 +330,11 @@ export default function ReaderScreen() {
           selectedText: noteEditor.selectedText,
           noteBody: body,
         });
+        announce('Note added');
       }
     } else {
       updateAnnotation.mutate({ id: noteEditor.id, input: { noteBody: body } });
+      announce('Note saved');
     }
     setNoteEditor(null);
   }
@@ -283,6 +347,7 @@ export default function ReaderScreen() {
       : { chapterId: currentChapterId, start: 0, end: 0, prefix: '', exact: '', suffix: '' };
     createBookmark.mutate({ chapterId: currentChapterId, textAnchor: JSON.stringify(full), label: null });
     setSelection(null);
+    announce('Bookmark set');
   }
 
   const handleWebViewMessage = useCallback(
@@ -329,12 +394,16 @@ export default function ReaderScreen() {
   const currentTocEntry = book.toc.find((c) => c.chapterId === currentChapterId);
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background }]}>
+    <View
+      style={[styles.container, { backgroundColor: colors.background }]}
+      nativeID="main-content"
+      role="main"
+    >
       <View style={[styles.header, { borderBottomColor: colors.border, backgroundColor: colors.surface }]}>
-        <Pressable onPress={() => router.back()} accessibilityLabel="Back to library">
+        <IconButton label="Back to library" onPress={() => router.back()}>
           <Text style={{ color: colors.accent, fontSize: 16 }}>← Library</Text>
-        </Pressable>
-        <View style={styles.headerCenter}>
+        </IconButton>
+        <View style={styles.headerCenter} accessibilityRole="header">
           <Text style={[styles.bookTitle, { color: colors.text }]} numberOfLines={1}>
             {book.title}
           </Text>
@@ -342,13 +411,21 @@ export default function ReaderScreen() {
             <Text style={[styles.chapterTitle, { color: colors.textMuted }]} numberOfLines={1}>
               {currentTocEntry.title ?? `Chapter ${currentTocEntry.spineOrder + 1}`}
             </Text>
-          )}          
+          )}
         </View>
         <View style={styles.headerRight}>
-          <HeaderButton label="TOC" onPress={() => setTocOpen(true)} colors={colors} />
-          <HeaderButton label="✎" onPress={() => setAnnotationsOpen(true)} colors={colors} />
-          <HeaderButton label="Aa" onPress={() => setSettingsOpen(true)} colors={colors} />
-          <HeaderButton label="⋯" onPress={() => setConfirmDelete(true)} colors={colors} />
+          <IconButton label="Table of contents" onPress={() => setTocOpen(true)} style={styles.headerBtn}>
+            <Text style={{ color: colors.accent, fontSize: 15 }}>TOC</Text>
+          </IconButton>
+          <IconButton label="Annotations and bookmarks" onPress={() => setAnnotationsOpen(true)} style={styles.headerBtn}>
+            <Text style={{ color: colors.accent, fontSize: 18 }}>✎</Text>
+          </IconButton>
+          <IconButton label="Display settings" onPress={() => setSettingsOpen(true)} style={styles.headerBtn}>
+            <Text style={{ color: colors.accent, fontSize: 15 }}>Aa</Text>
+          </IconButton>
+          <IconButton label="More options" onPress={() => setConfirmDelete(true)} style={styles.headerBtn}>
+            <Text style={{ color: colors.accent, fontSize: 18 }}>⋯</Text>
+          </IconButton>
         </View>
       </View>
 
@@ -363,34 +440,35 @@ export default function ReaderScreen() {
           assetsBaseUrl={`${BASE_URL}/api/v1/books/${bookId}/assets/`}
           initialScrollY={initialScrollY}
           language={book.language}
+          chapterTitle={currentTocEntry?.title ?? book.title}
           highlights={currentChapterHighlights}
           onMessage={handleWebViewMessage}
         />
       ) : null}
 
       <View style={[styles.footer, { borderTopColor: colors.border, backgroundColor: colors.surface }]}>
-        <Pressable
+        <IconButton
+          label="Previous chapter"
           onPress={goPrev}
           disabled={currentSpineIndex <= 0}
           style={{ opacity: currentSpineIndex <= 0 ? 0.4 : 1 }}
-          accessibilityLabel="Previous chapter"
         >
           <Text style={{ color: colors.accent, fontSize: 16 }}>← Prev</Text>
-        </Pressable>
+        </IconButton>
         <Text style={{ color: colors.textMuted, fontSize: 12 }}>
           {currentSpineIndex >= 0 ? `${currentSpineIndex + 1} / ${book.toc.length}` : ''}
         </Text>
-        <Pressable
+        <IconButton
+          label="Next chapter"
           onPress={goNext}
           disabled={currentSpineIndex < 0 || currentSpineIndex >= book.toc.length - 1}
           style={{
             opacity:
               currentSpineIndex < 0 || currentSpineIndex >= book.toc.length - 1 ? 0.4 : 1,
           }}
-          accessibilityLabel="Next chapter"
         >
           <Text style={{ color: colors.accent, fontSize: 16 }}>Next →</Text>
-        </Pressable>
+        </IconButton>
       </View>
 
       <TableOfContents
@@ -438,6 +516,7 @@ export default function ReaderScreen() {
           onDelete={() => {
             deleteAnnotation.mutate(activeHighlight.annotation.id);
             setActiveHighlight(null);
+            announce('Annotation deleted');
           }}
           onClose={() => setActiveHighlight(null)}
         />
@@ -458,8 +537,14 @@ export default function ReaderScreen() {
         bookmarks={bookmarksQuery.data ?? []}
         currentChapterId={currentChapterId}
         onNavigate={navigateToEntry}
-        onDeleteAnnotation={(id) => deleteAnnotation.mutate(id)}
-        onDeleteBookmark={(id) => deleteBookmark.mutate(id)}
+        onDeleteAnnotation={(id) => {
+          deleteAnnotation.mutate(id);
+          announce('Annotation deleted');
+        }}
+        onDeleteBookmark={(id) => {
+          deleteBookmark.mutate(id);
+          announce('Bookmark deleted');
+        }}
         onClose={() => setAnnotationsOpen(false)}
       />
       <ConfirmDialog
@@ -483,22 +568,6 @@ export default function ReaderScreen() {
         onCancel={() => setConfirmDelete(false)}
       />
     </View>
-  );
-}
-
-function HeaderButton({
-  label,
-  onPress,
-  colors,
-}: {
-  label: string;
-  onPress: () => void;
-  colors: { accent: string };
-}) {
-  return (
-    <Pressable onPress={onPress} style={styles.headerBtn}>
-      <Text style={{ color: colors.accent, fontSize: 15 }}>{label}</Text>
-    </Pressable>
   );
 }
 

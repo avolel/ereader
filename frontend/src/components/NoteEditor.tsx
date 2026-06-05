@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
-import { Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { StyleSheet, Text, TextInput, View } from 'react-native';
 
+import AccessibleModal from './a11y/AccessibleModal';
+import IconButton from './a11y/IconButton';
 import { useTheme } from '../providers/ThemeProvider';
 
 type Props = {
@@ -30,54 +32,44 @@ export default function NoteEditor({
     if (visible) setBody(initialBody);
   }, [visible, initialBody]);
 
-  // Esc to cancel on web (Modal.onRequestClose doesn't cover it there).
-  useEffect(() => {
-    if (!visible || typeof document === 'undefined') return;
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') onCancel();
-    }
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [visible, onCancel]);
-
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onCancel}>
-      <Pressable style={styles.backdrop} onPress={onCancel}>
-        <Pressable
-          onPress={() => {}}
-          style={[styles.panel, { backgroundColor: colors.surface, borderColor: colors.border }]}
-        >
-          <View style={[styles.header, { borderBottomColor: colors.border }]}>
-            <Pressable onPress={onCancel} accessibilityRole="button" accessibilityLabel="Cancel">
-              <Text style={{ color: colors.accent, fontSize: 16 }}>Cancel</Text>
-            </Pressable>
-            <Text style={[styles.title, { color: colors.text }]}>{title}</Text>
-            <Pressable
-              onPress={() => onSave(body.trim())}
-              accessibilityRole="button"
-              accessibilityLabel="Save note"
-            >
-              <Text style={{ color: colors.accent, fontSize: 16, fontWeight: '600' }}>Save</Text>
-            </Pressable>
-          </View>
+    <AccessibleModal
+      visible={visible}
+      onClose={onCancel}
+      label={title}
+      animationType="slide"
+      align="bottom"
+      panelStyle={[styles.panel, { backgroundColor: colors.surface, borderColor: colors.border }]}
+    >
+      <View style={[styles.header, { borderBottomColor: colors.border }]}>
+        <IconButton label="Cancel" onPress={onCancel}>
+          <Text style={{ color: colors.accent, fontSize: 16 }}>Cancel</Text>
+        </IconButton>
+        <Text style={[styles.title, { color: colors.text }]} accessibilityRole="header">
+          {title}
+        </Text>
+        <IconButton label="Save note" onPress={() => onSave(body.trim())}>
+          <Text style={{ color: colors.accent, fontSize: 16, fontWeight: '600' }}>Save</Text>
+        </IconButton>
+      </View>
 
-          <TextInput
-            value={body}
-            onChangeText={setBody}
-            placeholder="Write your note…"
-            placeholderTextColor={colors.textMuted}
-            multiline
-            autoFocus
-            style={[styles.input, { color: colors.text, backgroundColor: colors.background, borderColor: colors.border }]}
-          />
-        </Pressable>
-      </Pressable>
-    </Modal>
+      <TextInput
+        value={body}
+        onChangeText={setBody}
+        placeholder="Write your note…"
+        placeholderTextColor={colors.textMuted}
+        accessibilityLabel="Note text"
+        multiline
+        // autoFocus is respected by the focus trap (it skips moving focus when a
+        // child already holds it), so the field gets focus on open.
+        autoFocus
+        style={[styles.input, { color: colors.text, backgroundColor: colors.background, borderColor: colors.border }]}
+      />
+    </AccessibleModal>
   );
 }
 
 const styles = StyleSheet.create({
-  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
   panel: {
     maxHeight: '80%',
     borderTopLeftRadius: 12,

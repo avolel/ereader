@@ -2,13 +2,14 @@ import { Link, router } from 'expo-router';
 import { useState } from 'react';
 import {
   ActivityIndicator,
-  Pressable,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
 
+import IconButton from '../components/a11y/IconButton';
+import { useAnnouncer } from '../components/a11y/useAnnouncer';
 import { useAuth } from '../providers/AuthProvider';
 import { useTheme } from '../providers/ThemeProvider';
 import { extractApiError } from '../services/errors';
@@ -16,6 +17,7 @@ import { extractApiError } from '../services/errors';
 export default function RegisterScreen() {
   const { register } = useAuth();
   const theme = useTheme();
+  const { announce } = useAnnouncer();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -29,20 +31,31 @@ export default function RegisterScreen() {
       await register(username, password);
       router.replace('/library');
     } catch (err) {
-      setError(extractApiError(err).message);
+      const message = extractApiError(err).message;
+      setError(message);
+      announce(message, true); // assertive: a failed registration needs immediate notice
     } finally {
       setSubmitting(false);
     }
   }
 
   return (
-    <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
+    <View
+      style={[styles.container, { backgroundColor: theme.colors.background }]}
+      nativeID="main-content"
+      role="main"
+    >
       <View style={styles.card}>
-        <Text style={[styles.title, { color: theme.colors.text }]}>Create account</Text>
+        <Text style={[styles.title, { color: theme.colors.text }]} accessibilityRole="header">
+          Create account
+        </Text>
         <TextInput
           style={[styles.input, { borderColor: theme.colors.border, color: theme.colors.text }]}
           placeholder="Username"
           placeholderTextColor={theme.colors.textMuted}
+          accessibilityLabel="Username"
+          textContentType="username"
+          autoComplete="username"
           autoCapitalize="none"
           autoCorrect={false}
           value={username}
@@ -52,24 +65,37 @@ export default function RegisterScreen() {
           style={[styles.input, { borderColor: theme.colors.border, color: theme.colors.text }]}
           placeholder="Password"
           placeholderTextColor={theme.colors.textMuted}
+          accessibilityLabel="Password"
+          textContentType="newPassword"
+          autoComplete="new-password"
           secureTextEntry
           value={password}
           onChangeText={setPassword}
         />
-        {error && <Text style={[styles.error, { color: theme.colors.error }]}>{error}</Text>}
-        <Pressable
+        {error && (
+          <Text
+            accessibilityRole="alert"
+            accessibilityLiveRegion="assertive"
+            style={[styles.error, { color: theme.colors.error }]}
+          >
+            {error}
+          </Text>
+        )}
+        <IconButton
+          label="Create account"
           onPress={onSubmit}
           disabled={submitting || !username || !password}
+          busy={submitting}
           style={[
             styles.button,
             { backgroundColor: theme.colors.accent, opacity: submitting || !username || !password ? 0.6 : 1 },
           ]}
         >
           {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Create account</Text>}
-        </Pressable>
+        </IconButton>
         <View style={styles.linkRow}>
           <Text style={{ color: theme.colors.textMuted }}>Already have an account? </Text>
-          <Link href="/login" style={{ color: theme.colors.accent }}>
+          <Link href="/login" accessibilityRole="link" style={{ color: theme.colors.accent }}>
             Sign in
           </Link>
         </View>

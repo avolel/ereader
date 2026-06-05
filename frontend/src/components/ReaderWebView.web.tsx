@@ -5,7 +5,13 @@ import { buildChapterDocument } from '../lib/webviewScripts';
 import { HighlightColour, TextAnchor } from '../types';
 
 export type DOMRectLike = { x: number; y: number; width: number; height: number };
-export type RenderHighlight = { id: string; anchor: TextAnchor; colour: HighlightColour };
+// hasNote feeds the highlight's screen-reader label ("<colour> highlight, has note").
+export type RenderHighlight = {
+  id: string;
+  anchor: TextAnchor;
+  colour: HighlightColour;
+  hasNote?: boolean;
+};
 // Scroll-to/flash target: an existing mark by id, or an anchor to resolve.
 export type FlashTarget = { id?: string; anchor?: TextAnchor };
 
@@ -13,6 +19,8 @@ export type ReaderWebViewHandle = {
   scrollTo: (y: number) => void;
   applyHighlights: (list: RenderHighlight[]) => void;
   flashTo: (target: FlashTarget) => void;
+  // Move AT/keyboard focus into the chapter body (called on chapter change).
+  focusContent: () => void;
 };
 
 export type ReaderWebViewMessage =
@@ -28,6 +36,8 @@ type Props = {
   assetsBaseUrl: string;
   initialScrollY?: number;
   language?: string | null;
+  // Used to title the iframe for assistive tech (WCAG 4.1.2).
+  chapterTitle?: string;
   highlights: RenderHighlight[];
   onMessage: (msg: ReaderWebViewMessage) => void;
 };
@@ -42,7 +52,7 @@ type Props = {
 // proxy them through the API. For now everything is same-origin so the iframe
 // can pull /api/v1/books/{id}/assets/... directly.
 const ReaderWebView = forwardRef<ReaderWebViewHandle, Props>(function ReaderWebView(
-  { chapterHtml, initialScrollY, language, highlights, onMessage },
+  { chapterHtml, initialScrollY, language, chapterTitle, highlights, onMessage },
   ref,
 ) {
   const { globalSetting, theme } = useThemeContext();
@@ -57,6 +67,12 @@ const ReaderWebView = forwardRef<ReaderWebViewHandle, Props>(function ReaderWebV
     },
     flashTo: (target: FlashTarget) => {
       iframeRef.current?.contentWindow?.postMessage({ __er: 'flashTo', target }, '*');
+    },
+    focusContent: () => {
+      // Focus the iframe element itself so the document is in the tab ring, then
+      // ask the inner script to focus #er-content for AT.
+      iframeRef.current?.focus();
+      iframeRef.current?.contentWindow?.postMessage({ __er: 'focusContent' }, '*');
     },
   }));
 
@@ -106,7 +122,8 @@ const ReaderWebView = forwardRef<ReaderWebViewHandle, Props>(function ReaderWebV
     <iframe
       ref={iframeRef}
       srcDoc={srcDoc}
-      title="Chapter content"
+      title={chapterTitle ? `${chapterTitle} — book chapter content` : 'Book chapter content'}
+      aria-label={chapterTitle ? `${chapterTitle} — book chapter content` : 'Book chapter content'}
       style={{
         width: '100%',
         height: '100%',
