@@ -79,15 +79,15 @@ describe('AnnotationsDrawer', () => {
   });
 
   it('Should_FireOnDeleteAnnotation_When_DeletePressed', () => {
-    const { props, getAllByLabelText } = setup();
-    // ch-1 renders first (spine order), so its annotation's Delete is first.
-    fireEvent.press(getAllByLabelText('Delete')[0]);
+    const { props, getByLabelText } = setup();
+    // Delete labels now fold in the colour/type so they're not colour-only.
+    fireEvent.press(getByLabelText('Delete yellow highlight: highlighted text'));
     expect(props.onDeleteAnnotation).toHaveBeenCalledWith('an-1');
   });
 
   it('Should_NavigateWithMarkId_When_AnnotationRowTapped', () => {
     const { props, getByLabelText } = setup();
-    fireEvent.press(getByLabelText('Go to highlighted text'));
+    fireEvent.press(getByLabelText('Go to yellow highlight: highlighted text'));
     expect(props.onNavigate).toHaveBeenCalledWith('ch-1', { id: 'an-1' });
   });
 });

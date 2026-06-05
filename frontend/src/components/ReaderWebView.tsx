@@ -7,7 +7,13 @@ import { buildChapterDocument } from '../lib/webviewScripts';
 import { HighlightColour, TextAnchor } from '../types';
 
 export type DOMRectLike = { x: number; y: number; width: number; height: number };
-export type RenderHighlight = { id: string; anchor: TextAnchor; colour: HighlightColour };
+// hasNote feeds the highlight's screen-reader label ("<colour> highlight, has note").
+export type RenderHighlight = {
+  id: string;
+  anchor: TextAnchor;
+  colour: HighlightColour;
+  hasNote?: boolean;
+};
 // Scroll-to/flash target: an existing mark by id, or an anchor to resolve.
 export type FlashTarget = { id?: string; anchor?: TextAnchor };
 
@@ -15,6 +21,8 @@ export type ReaderWebViewHandle = {
   scrollTo: (y: number) => void;
   applyHighlights: (list: RenderHighlight[]) => void;
   flashTo: (target: FlashTarget) => void;
+  // Move AT/keyboard focus into the chapter body (called on chapter change).
+  focusContent: () => void;
 };
 
 export type ReaderWebViewMessage =
@@ -30,6 +38,9 @@ type Props = {
   assetsBaseUrl: string;
   initialScrollY?: number;
   language?: string | null;
+  // Accepted for prop-parity with the web shim (used there to title the iframe);
+  // native AT reads the WebView content directly, so it isn't consumed here.
+  chapterTitle?: string;
   highlights: RenderHighlight[];
   onMessage: (msg: ReaderWebViewMessage) => void;
 };
@@ -53,6 +64,9 @@ const ReaderWebView = forwardRef<ReaderWebViewHandle, Props>(function ReaderWebV
     },
     flashTo: (target: FlashTarget) => {
       webRef.current?.injectJavaScript(`window.__erFlashTo(${JSON.stringify(target)}); true;`);
+    },
+    focusContent: () => {
+      webRef.current?.injectJavaScript('window.__erFocusContent && window.__erFocusContent(); true;');
     },
   }));
 

@@ -1,6 +1,8 @@
 import { useMemo } from 'react';
-import { Modal, Pressable, SectionList, StyleSheet, Text, View } from 'react-native';
+import { SectionList, StyleSheet, Text, View } from 'react-native';
 
+import AccessibleModal from './a11y/AccessibleModal';
+import IconButton from './a11y/IconButton';
 import { useTheme } from '../providers/ThemeProvider';
 import { HIGHLIGHT_SWATCHES } from './SelectionMenu';
 import type { FlashTarget } from './ReaderWebView';
@@ -66,92 +68,104 @@ export default function AnnotationsDrawer({
   }, [toc, annotations, bookmarks]);
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable style={styles.backdrop} onPress={onClose}>
-        <Pressable
-          onPress={() => {}}
-          style={[styles.panel, { backgroundColor: colors.surface, borderColor: colors.border }]}
-        >
-          <View style={[styles.header, { borderBottomColor: colors.border }]}>
-            <Text style={[styles.title, { color: colors.text }]}>Annotations</Text>
-            <Pressable onPress={onClose} accessibilityRole="button" accessibilityLabel="Close annotations">
-              <Text style={{ color: colors.accent, fontSize: 16 }}>Close</Text>
-            </Pressable>
-          </View>
+    <AccessibleModal
+      visible={visible}
+      onClose={onClose}
+      label="Annotations and bookmarks"
+      // Right-edge full-height drawer: 'custom' + alignSelf positions it.
+      align="custom"
+      panelStyle={[styles.panel, { backgroundColor: colors.surface, borderColor: colors.border }]}
+    >
+      <View style={[styles.header, { borderBottomColor: colors.border }]}>
+        <Text style={[styles.title, { color: colors.text }]} accessibilityRole="header">
+          Annotations
+        </Text>
+        <IconButton label="Close annotations" onPress={onClose}>
+          <Text style={{ color: colors.accent, fontSize: 16 }}>Close</Text>
+        </IconButton>
+      </View>
 
-          <SectionList
-            sections={sections}
-            keyExtractor={(row) => `${row.kind}:${row.item.id}`}
-            stickySectionHeadersEnabled={false}
-            ListEmptyComponent={
-              <Text style={[styles.empty, { color: colors.textMuted }]}>
-                No highlights, notes, or bookmarks yet.
-              </Text>
-            }
-            renderSectionHeader={({ section }) => (
-              <Text
-                style={[styles.sectionHeader, { color: colors.textMuted, backgroundColor: colors.background }]}
-                numberOfLines={1}
+      <SectionList
+        sections={sections}
+        keyExtractor={(row) => `${row.kind}:${row.item.id}`}
+        stickySectionHeadersEnabled={false}
+        style={styles.list}
+        ListEmptyComponent={
+          <Text style={[styles.empty, { color: colors.textMuted }]}>
+            No highlights, notes, or bookmarks yet.
+          </Text>
+        }
+        renderSectionHeader={({ section }) => (
+          <Text
+            accessibilityRole="header"
+            style={[styles.sectionHeader, { color: colors.textMuted, backgroundColor: colors.background }]}
+            numberOfLines={1}
+          >
+            {section.title}
+          </Text>
+        )}
+        renderItem={({ item: row, section }) => {
+          const active = section.chapterId === currentChapterId;
+          const target: FlashTarget =
+            row.kind === 'annotation'
+              ? { id: row.item.id }
+              : { anchor: parseAnchor(row.item.textAnchor) };
+          return (
+            <View
+              style={[
+                styles.row,
+                { backgroundColor: active ? colors.background : 'transparent' },
+              ]}
+            >
+              <IconButton
+                // Colour is folded into the accessible name so the swatch dot
+                // isn't a colour-only affordance (1.4.1).
+                label={`Go to ${rowAccessibleLabel(row)}`}
+                onPress={() => onNavigate(section.chapterId, target)}
+                style={styles.rowMain}
               >
-                {section.title}
-              </Text>
-            )}
-            renderItem={({ item: row, section }) => {
-              const active = section.chapterId === currentChapterId;
-              const target: FlashTarget =
-                row.kind === 'annotation'
-                  ? { id: row.item.id }
-                  : { anchor: parseAnchor(row.item.textAnchor) };
-              return (
-                <View
-                  style={[
-                    styles.row,
-                    { backgroundColor: active ? colors.background : 'transparent' },
-                  ]}
-                >
-                  <Pressable
-                    onPress={() => onNavigate(section.chapterId, target)}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Go to ${rowLabel(row)}`}
-                    style={styles.rowMain}
-                  >
-                    {row.kind === 'annotation' && row.item.colour ? (
-                      <View style={[styles.dot, { backgroundColor: HIGHLIGHT_SWATCHES[row.item.colour] }]} />
-                    ) : (
-                      <View style={[styles.dot, styles.dotPlain, { borderColor: colors.border }]} />
-                    )}
-                    <View style={styles.rowBody}>
-                      <Text numberOfLines={2} style={[styles.rowText, { color: colors.text }]}>
-                        {rowLabel(row)}
-                      </Text>
-                      {row.kind === 'annotation' && row.item.noteBody ? (
-                        <Text numberOfLines={2} style={[styles.note, { color: colors.textMuted }]}>
-                          {row.item.noteBody}
-                        </Text>
-                      ) : null}
-                    </View>
-                  </Pressable>
-                  <Pressable
-                    onPress={() =>
-                      row.kind === 'annotation'
-                        ? onDeleteAnnotation(row.item.id)
-                        : onDeleteBookmark(row.item.id)
-                    }
-                    accessibilityRole="button"
-                    accessibilityLabel="Delete"
-                    hitSlop={8}
-                    style={styles.delete}
-                  >
-                    <Text style={{ color: colors.error, fontSize: 13 }}>Delete</Text>
-                  </Pressable>
+                {row.kind === 'annotation' && row.item.colour ? (
+                  <View style={[styles.dot, { backgroundColor: HIGHLIGHT_SWATCHES[row.item.colour] }]} />
+                ) : (
+                  <View style={[styles.dot, styles.dotPlain, { borderColor: colors.border }]} />
+                )}
+                <View style={styles.rowBody}>
+                  <Text numberOfLines={2} style={[styles.rowText, { color: colors.text }]}>
+                    {rowLabel(row)}
+                  </Text>
+                  {row.kind === 'annotation' && row.item.noteBody ? (
+                    <Text numberOfLines={2} style={[styles.note, { color: colors.textMuted }]}>
+                      {row.item.noteBody}
+                    </Text>
+                  ) : null}
                 </View>
-              );
-            }}
-          />
-        </Pressable>
-      </Pressable>
-    </Modal>
+              </IconButton>
+              <IconButton
+                label={`Delete ${rowAccessibleLabel(row)}`}
+                onPress={() =>
+                  row.kind === 'annotation'
+                    ? onDeleteAnnotation(row.item.id)
+                    : onDeleteBookmark(row.item.id)
+                }
+                hitSlop={8}
+                style={styles.delete}
+              >
+                <Text style={{ color: colors.error, fontSize: 13 }}>Delete</Text>
+              </IconButton>
+            </View>
+          );
+        }}
+      />
+    </AccessibleModal>
   );
+}
+
+// Accessible name for a row that folds in the colour/type so AT users get the
+// same information the coloured dot conveys visually.
+function rowAccessibleLabel(row: Row): string {
+  if (row.kind === 'bookmark') return `bookmark: ${rowLabel(row)}`;
+  const colour = row.item.colour ? `${row.item.colour} ` : '';
+  return `${colour}${row.item.type}: ${rowLabel(row)}`;
 }
 
 function createdAt(row: Row): string {
@@ -176,18 +190,14 @@ function parseAnchor(raw: string): TextAnchor {
 }
 
 const styles = StyleSheet.create({
-  backdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.4)',
-    alignItems: 'flex-end',
-    justifyContent: 'center',
-  },
   panel: {
     width: '85%',
     maxWidth: 420,
     height: '100%',
+    alignSelf: 'flex-end', // pin to the right edge within the 'custom' backdrop
     borderLeftWidth: 1,
   },
+  list: { flex: 1 },
   header: {
     flexDirection: 'row',
     alignItems: 'center',

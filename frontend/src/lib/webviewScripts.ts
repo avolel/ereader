@@ -20,8 +20,17 @@ type BuildChapterDocumentArgs = {
   initialScrollY?: number;
 };
 
-export function buildChapterDocument(args: BuildChapterDocumentArgs, 
-  highlights: { id: string; anchor: TextAnchor; colour: HighlightColour }[]): string {
+// `hasNote` drives the screen-reader "has note" suffix on the mark's label; it's
+// optional so callers that don't track notes still produce valid highlights.
+type HighlightSeed = {
+  id: string;
+  anchor: TextAnchor;
+  colour: HighlightColour;
+  hasNote?: boolean;
+};
+
+export function buildChapterDocument(args: BuildChapterDocumentArgs,
+  highlights: HighlightSeed[]): string {
   const { chapterHtml, setting, webviewColors, resolvedMode, language, initialScrollY } = args;
   const lang = language ?? 'en';
 
@@ -66,7 +75,15 @@ export function buildChapterDocument(args: BuildChapterDocumentArgs,
     0%   { background: var(--er-selection); }
     100% { background: transparent; }
   }
-  
+  /* Respect reduced-motion: drop the flash animation entirely (WCAG 2.3.3). */
+  @media (prefers-reduced-motion: reduce) {
+    .er-anchor-flash { animation: none; }
+  }
+  /* #er-content is programmatically focusable (focused on chapter change) but
+     shouldn't show a focus ring; keyboard-focusable highlights should. */
+  #er-content:focus { outline: none; }
+  mark.er-hl:focus-visible { outline: 2px solid var(--er-link); outline-offset: 1px; }
+
   /* Saved highlights. Semi-transparent so dark-theme text stays legible. */
   mark.er-hl { color: inherit; border-radius: 2px; cursor: pointer; }
   mark.er-hl[data-colour="yellow"] { background: rgba(255, 214, 0, .40); }
@@ -77,7 +94,7 @@ export function buildChapterDocument(args: BuildChapterDocumentArgs,
 </style>
 </head>
 <body>
-<div id="er-content">${chapterHtml}</div>
+<div id="er-content" role="document" aria-label="Chapter content" tabindex="-1">${chapterHtml}</div>
 <script>
 (function() {
   function send(msg) {
@@ -148,9 +165,7 @@ function escapeAttribute(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
 }
 
-function buildAnnotationScript(
-  highlights: { id: string; anchor: TextAnchor; colour: HighlightColour }[],
-): string {
+function buildAnnotationScript(highlights: HighlightSeed[]): string {
   // Escape the seed so an `</script>` inside any `exact`/`prefix`/`suffix`
   // can't terminate this script tag early.
   const seed = JSON.stringify(highlights).replace(/</g, '\\u003c');
@@ -208,9 +223,10 @@ function buildAnnotationScript(
         return segs;
       }
 
-      function wrapRange(start, end, id, colour) {
+      function wrapRange(start, end, id, colour, hasNote) {
         var segs = collectSegments(start, end);
         if (!segs.length) return false;
+        var label = colour + ' highlight' + (hasNote ? ', has note' : '');
         segs.forEach(function(seg) {
           var range = document.createRange();
           range.setStart(seg.node, seg.from);
@@ -219,6 +235,9 @@ function buildAnnotationScript(
           mark.className = 'er-hl';
           mark.setAttribute('data-id', id);
           mark.setAttribute('data-colour', colour);
+          // Keyboard-focusable + named so AT announces "<colour> highlight[, has note]".
+          mark.setAttribute('tabindex', '0');
+          mark.setAttribute('aria-label', label);
           range.surroundContents(mark);
         });
         return true;
@@ -259,7 +278,7 @@ function buildAnnotationScript(
         var text = fullText();
         (list || []).forEach(function(h) {
           var off = resolveOffsets(text, h.anchor);
-          var ok = off ? wrapRange(off.start, off.end, h.id, h.colour) : false;
+          var ok = off ? wrapRange(off.start, off.end, h.id, h.colour, h.hasNote) : false;
           if (!ok) send({ type: 'anchorMiss', id: h.id });
         });
       };
@@ -302,6 +321,14 @@ function buildAnnotationScript(
         }
       };
 
+      // --- public: move focus into the chapter (called on chapter change) ------
+      // Focuses the #er-content container so screen-reader/keyboard focus lands at
+      // the top of the new chapter rather than wherever it was in the chrome.
+      window.__erFocusContent = function() {
+        var r = root();
+        if (r && typeof r.focus === 'function') r.focus();
+      };
+
       // Web (iframe) bridge: native calls window.__er* directly via injectJavaScript,
       // but the web shim drives the iframe through postMessage — handle it here.
       window.addEventListener('message', function(e) {
@@ -309,6 +336,7 @@ function buildAnnotationScript(
         if (!d || typeof d !== 'object') return;
         if (d.__er === 'applyHighlights') window.__erApplyHighlights(d.list);
         else if (d.__er === 'flashTo') window.__erFlashTo(d.target);
+        else if (d.__er === 'focusContent') window.__erFocusContent();
       });
 
       // --- selection capture ----------------------------------------------------
@@ -336,16 +364,32 @@ function buildAnnotationScript(
       }
       document.addEventListener('mouseup', captureSelection);
       document.addEventListener('touchend', captureSelection);
+      // Keyboard-driven selection (Shift+Arrow) never fires mouseup/touchend, so
+      // capture on keyup while Shift is held — required for highlight-by-keyboard
+      // (FR-29). captureSelection() self-guards on collapsed/out-of-root ranges.
+      document.addEventListener('keyup', function(e) {
+        if (e.shiftKey) captureSelection();
+      });
 
-      // --- tap an existing highlight -------------------------------------------
-      document.addEventListener('click', function(e) {
-        var mark = e.target && e.target.closest ? e.target.closest('mark.er-hl') : null;
-        if (!mark) return;
+      // --- tap or key-activate an existing highlight ---------------------------
+      function emitHighlightTap(mark) {
         send({
           type: 'highlightTap',
           id: mark.getAttribute('data-id'),
           rect: rectOf(mark.getBoundingClientRect())
         });
+      }
+      document.addEventListener('click', function(e) {
+        var mark = e.target && e.target.closest ? e.target.closest('mark.er-hl') : null;
+        if (mark) emitHighlightTap(mark);
+      });
+      // Enter/Space activate a focused highlight, mirroring click (FR-29).
+      document.addEventListener('keydown', function(e) {
+        if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+        var mark = e.target && e.target.closest ? e.target.closest('mark.er-hl') : null;
+        if (!mark) return;
+        e.preventDefault();
+        emitHighlightTap(mark);
       });
 
       // --- seed first paint with saved highlights ------------------------------

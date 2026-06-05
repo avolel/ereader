@@ -1,6 +1,7 @@
-import { useEffect } from 'react';
-import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 
+import AccessibleModal from './a11y/AccessibleModal';
+import IconButton from './a11y/IconButton';
 import { useTheme } from '../providers/ThemeProvider';
 import type { DOMRectLike } from './ReaderWebView';
 import { HIGHLIGHT_SWATCHES } from './SelectionMenu';
@@ -29,79 +30,62 @@ export default function AnnotationPopover({
 }: Props) {
   const { colors } = useTheme();
 
-  useEffect(() => {
-    if (typeof document === 'undefined') return;
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose();
-    }
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
   const top = Math.max(8, rect.y + rect.height + 8);
   const left = Math.max(8, rect.x);
 
   return (
-    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable style={styles.backdrop} onPress={onClose}>
-        <Pressable
-          onPress={() => {}}
-          style={[
-            styles.panel,
-            { top, left, backgroundColor: colors.surface, borderColor: colors.border },
-          ]}
+    <AccessibleModal
+      visible
+      onClose={onClose}
+      label="Annotation actions"
+      align="custom"
+      dimmed={false}
+      panelStyle={[
+        styles.panel,
+        { top, left, backgroundColor: colors.surface, borderColor: colors.border },
+      ]}
+    >
+      <View style={styles.swatchRow}>
+        {COLOURS.map((c) => (
+          <IconButton
+            key={c}
+            label={`Recolour ${c}`}
+            selected={annotation.colour === c}
+            onPress={() => onChangeColour(c)}
+            style={[
+              styles.swatch,
+              { backgroundColor: HIGHLIGHT_SWATCHES[c] },
+              annotation.colour === c && { borderColor: colors.text, borderWidth: 2 },
+            ]}
+          />
+        ))}
+      </View>
+
+      {annotation.noteBody ? (
+        <Text numberOfLines={3} style={[styles.note, { color: colors.textMuted }]}>
+          {annotation.noteBody}
+        </Text>
+      ) : null}
+
+      <View style={styles.actions}>
+        <IconButton
+          label={annotation.noteBody ? 'Edit note' : 'Add note'}
+          onPress={onRequestEditNote}
+          style={styles.action}
         >
-          <View style={styles.swatchRow}>
-            {COLOURS.map((c) => (
-              <Pressable
-                key={c}
-                accessibilityRole="button"
-                accessibilityLabel={`Recolour ${c}`}
-                focusable
-                onPress={() => onChangeColour(c)}
-                style={[
-                  styles.swatch,
-                  { backgroundColor: HIGHLIGHT_SWATCHES[c] },
-                  annotation.colour === c && { borderColor: colors.text, borderWidth: 2 },
-                ]}
-              />
-            ))}
-          </View>
-
-          {annotation.noteBody ? (
-            <Text numberOfLines={3} style={[styles.note, { color: colors.textMuted }]}>
-              {annotation.noteBody}
-            </Text>
-          ) : null}
-
-          <View style={styles.actions}>
-            <Pressable
-              onPress={onRequestEditNote}
-              accessibilityRole="button"
-              accessibilityLabel={annotation.noteBody ? 'Edit note' : 'Add note'}
-              style={styles.action}
-            >
-              <Text style={{ color: colors.accent, fontSize: 14 }}>
-                {annotation.noteBody ? 'Edit note' : 'Add note'}
-              </Text>
-            </Pressable>
-            <Pressable
-              onPress={onDelete}
-              accessibilityRole="button"
-              accessibilityLabel="Delete annotation"
-              style={styles.action}
-            >
-              <Text style={{ color: colors.error, fontSize: 14 }}>Delete</Text>
-            </Pressable>
-          </View>
-        </Pressable>
-      </Pressable>
-    </Modal>
+          <Text style={{ color: colors.accent, fontSize: 14 }}>
+            {annotation.noteBody ? 'Edit note' : 'Add note'}
+          </Text>
+        </IconButton>
+        <IconButton label="Delete annotation" onPress={onDelete} style={styles.action}>
+          <Text style={{ color: colors.error, fontSize: 14 }}>Delete</Text>
+        </IconButton>
+      </View>
+    </AccessibleModal>
   );
 }
 
 const styles = StyleSheet.create({
-  backdrop: { flex: 1 },
   panel: {
     position: 'absolute',
     width: 240,

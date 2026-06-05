@@ -2,14 +2,15 @@ import { useEffect } from 'react';
 import {
   ActivityIndicator,
   Linking,
-  Modal,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
 
+import AccessibleModal from './a11y/AccessibleModal';
+import IconButton from './a11y/IconButton';
+import { useAnnouncer } from './a11y/useAnnouncer';
 import { useDictionary, useWikipedia } from '../hooks/useLookup';
 import { useTheme } from '../providers/ThemeProvider';
 import type { DictionarySense } from '../types';
@@ -22,101 +23,106 @@ type Props = { term: string; onClose: () => void };
 // Wikipedia summary below, each driven by its own cached query.
 export default function LookupOverlay({ term, onClose }: Props) {
   const { colors } = useTheme();
+  const { announce } = useAnnouncer();
   const dictionary = useDictionary(term);
   const wikipedia = useWikipedia(term);
 
-  // Esc to close on web. Modal.onRequestClose doesn't fire for Esc there, so we
-  // listen directly; guarded for native where `document` is undefined.
+  // Announce the dictionary outcome so screen-reader users hear the result of a
+  // lookup they can't see resolve (FR-26), including the "no definition" state.
   useEffect(() => {
-    if (typeof document === 'undefined') return;
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose();
+    if (dictionary.isLoading) return;
+    if (dictionary.isError) {
+      announce('Could not load the dictionary', true);
+      return;
     }
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
+    if (dictionary.data) {
+      announce(
+        dictionary.data.found
+          ? `Definition found for ${term}`
+          : `No definition found for ${term}`,
+      );
+    }
+  }, [dictionary.isLoading, dictionary.isError, dictionary.data, term, announce]);
 
   return (
-    <Modal visible transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={styles.backdrop} onPress={onClose} accessibilityViewIsModal>
-        <Pressable
-          onPress={() => {}}
-          style={[styles.panel, { backgroundColor: colors.surface, borderColor: colors.border }]}
-        >
-          <View style={[styles.header, { borderBottomColor: colors.border }]}>
-            <Text style={[styles.term, { color: colors.text }]} numberOfLines={1}>
-              {term}
-            </Text>
-            <Pressable
-              onPress={onClose}
-              accessibilityRole="button"
-              accessibilityLabel="Close lookup"
-              focusable
-            >
-              <Text style={{ color: colors.accent, fontSize: 16, fontWeight: '600' }}>Done</Text>
-            </Pressable>
+    <AccessibleModal
+      visible
+      onClose={onClose}
+      label={`Lookup: ${term}`}
+      animationType="slide"
+      align="bottom"
+      panelStyle={[styles.panel, { backgroundColor: colors.surface, borderColor: colors.border }]}
+    >
+      <View style={[styles.header, { borderBottomColor: colors.border }]}>
+        <Text style={[styles.term, { color: colors.text }]} numberOfLines={1} accessibilityRole="header">
+          {term}
+        </Text>
+        <IconButton label="Close lookup" onPress={onClose}>
+          <Text style={{ color: colors.accent, fontSize: 16, fontWeight: '600' }}>Done</Text>
+        </IconButton>
+      </View>
+
+      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
+        {/* Dictionary section (FR-25/26) */}
+        <Text style={[styles.sectionLabel, { color: colors.textMuted }]} accessibilityRole="header">
+          Dictionary
+        </Text>
+        {dictionary.isLoading ? (
+          <ActivityIndicator color={colors.accent} style={styles.loader} />
+        ) : dictionary.isError ? (
+          <Text style={[styles.body, { color: colors.textMuted }]}>
+            Couldn’t load the dictionary.
+          </Text>
+        ) : dictionary.data && dictionary.data.found ? (
+          <DictionarySenses senses={dictionary.data.senses} colors={colors} />
+        ) : (
+          <Text style={[styles.body, { color: colors.textMuted }]}>
+            No definition found for “{dictionary.data?.word ?? term}”.
+          </Text>
+        )}
+
+        <View style={[styles.divider, { backgroundColor: colors.border }]} />
+
+        {/* Wikipedia section (FR-27) */}
+        <Text style={[styles.sectionLabel, { color: colors.textMuted }]} accessibilityRole="header">
+          Wikipedia
+        </Text>
+        {wikipedia.isLoading ? (
+          <ActivityIndicator color={colors.accent} style={styles.loader} />
+        ) : wikipedia.isError ? (
+          <Text style={[styles.body, { color: colors.textMuted }]}>
+            Couldn’t reach Wikipedia.
+          </Text>
+        ) : wikipedia.data && wikipedia.data.found ? (
+          <View>
+            {wikipedia.data.title ? (
+              <Text style={[styles.wikiTitle, { color: colors.text }]}>
+                {wikipedia.data.title}
+              </Text>
+            ) : null}
+            {wikipedia.data.extract ? (
+              <Text style={[styles.body, { color: colors.text }]}>
+                {wikipedia.data.extract}
+              </Text>
+            ) : null}
+            {wikipedia.data.pageUrl ? (
+              <IconButton
+                label="Read on Wikipedia"
+                accessibilityRole="link"
+                onPress={() => Linking.openURL(wikipedia.data!.pageUrl!)}
+                style={styles.link}
+              >
+                <Text style={{ color: colors.accent, fontSize: 14 }}>Read on Wikipedia</Text>
+              </IconButton>
+            ) : null}
           </View>
-
-          <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
-            {/* Dictionary section (FR-25/26) */}
-            <Text style={[styles.sectionLabel, { color: colors.textMuted }]}>Dictionary</Text>
-            {dictionary.isLoading ? (
-              <ActivityIndicator color={colors.accent} style={styles.loader} />
-            ) : dictionary.isError ? (
-              <Text style={[styles.body, { color: colors.textMuted }]}>
-                Couldn’t load the dictionary.
-              </Text>
-            ) : dictionary.data && dictionary.data.found ? (
-              <DictionarySenses senses={dictionary.data.senses} colors={colors} />
-            ) : (
-              <Text style={[styles.body, { color: colors.textMuted }]}>
-                No definition found for “{dictionary.data?.word ?? term}”.
-              </Text>
-            )}
-
-            <View style={[styles.divider, { backgroundColor: colors.border }]} />
-
-            {/* Wikipedia section (FR-27) */}
-            <Text style={[styles.sectionLabel, { color: colors.textMuted }]}>Wikipedia</Text>
-            {wikipedia.isLoading ? (
-              <ActivityIndicator color={colors.accent} style={styles.loader} />
-            ) : wikipedia.isError ? (
-              <Text style={[styles.body, { color: colors.textMuted }]}>
-                Couldn’t reach Wikipedia.
-              </Text>
-            ) : wikipedia.data && wikipedia.data.found ? (
-              <View>
-                {wikipedia.data.title ? (
-                  <Text style={[styles.wikiTitle, { color: colors.text }]}>
-                    {wikipedia.data.title}
-                  </Text>
-                ) : null}
-                {wikipedia.data.extract ? (
-                  <Text style={[styles.body, { color: colors.text }]}>
-                    {wikipedia.data.extract}
-                  </Text>
-                ) : null}
-                {wikipedia.data.pageUrl ? (
-                  <Pressable
-                    onPress={() => Linking.openURL(wikipedia.data!.pageUrl!)}
-                    accessibilityRole="link"
-                    accessibilityLabel="Read on Wikipedia"
-                    focusable
-                    style={styles.link}
-                  >
-                    <Text style={{ color: colors.accent, fontSize: 14 }}>Read on Wikipedia</Text>
-                  </Pressable>
-                ) : null}
-              </View>
-            ) : (
-              <Text style={[styles.body, { color: colors.textMuted }]}>
-                No Wikipedia article found.
-              </Text>
-            )}
-          </ScrollView>
-        </Pressable>
-      </Pressable>
-    </Modal>
+        ) : (
+          <Text style={[styles.body, { color: colors.textMuted }]}>
+            No Wikipedia article found.
+          </Text>
+        )}
+      </ScrollView>
+    </AccessibleModal>
   );
 }
 
@@ -147,7 +153,6 @@ function DictionarySenses({
 }
 
 const styles = StyleSheet.create({
-  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
   panel: {
     maxHeight: '80%',
     borderTopLeftRadius: 12,

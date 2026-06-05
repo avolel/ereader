@@ -3,13 +3,14 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
-  Pressable,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
 
+import IconButton from '../components/a11y/IconButton';
+import { useAnnouncer } from '../components/a11y/useAnnouncer';
 import { useSearch } from '../hooks/useSearch';
 import { useTheme } from '../providers/ThemeProvider';
 import { extractApiError } from '../services/errors';
@@ -20,6 +21,7 @@ const DEBOUNCE_MS = 300;
 export default function SearchScreen() {
   const router = useRouter();
   const { colors } = useTheme();
+  const { announce } = useAnnouncer();
   const [input, setInput] = useState('');
   const [debounced, setDebounced] = useState('');
 
@@ -35,6 +37,13 @@ export default function SearchScreen() {
     [query.data],
   );
 
+  // Announce the result count once a search settles so screen-reader users get
+  // feedback they can't see land in the list.
+  useEffect(() => {
+    if (debounced.length < 2 || query.isLoading || query.isError) return;
+    announce(`${items.length} ${items.length === 1 ? 'result' : 'results'}`);
+  }, [debounced, query.isLoading, query.isError, items.length, announce]);
+
   function onHitPress(hit: SearchHit) {
     // anchor format consumed by ReaderScreen: chapterId[:scrollY]. Search results
     // don't carry scrollY (no per-match offset), so jumping lands at the top of
@@ -46,11 +55,15 @@ export default function SearchScreen() {
   }
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background }]}>
+    <View
+      style={[styles.container, { backgroundColor: colors.background }]}
+      nativeID="main-content"
+      role="main"
+    >
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
-        <Pressable onPress={() => router.back()} accessibilityLabel="Back">
+        <IconButton label="Back" onPress={() => router.back()}>
           <Text style={{ color: colors.accent, fontSize: 16 }}>← Back</Text>
-        </Pressable>
+        </IconButton>
         <TextInput
           autoFocus
           style={[
@@ -59,6 +72,7 @@ export default function SearchScreen() {
           ]}
           placeholder="Search your library"
           placeholderTextColor={colors.textMuted}
+          accessibilityLabel="Search all books"
           value={input}
           onChangeText={setInput}
           returnKeyType="search"
@@ -79,6 +93,15 @@ export default function SearchScreen() {
         <FlatList
           data={items}
           keyExtractor={(h, i) => `${h.bookId}-${h.chapterId}-${i}`}
+          accessibilityRole="list"
+          ListHeaderComponent={
+            <Text
+              accessibilityRole="header"
+              style={[styles.resultCount, { color: colors.textMuted }]}
+            >
+              {items.length} {items.length === 1 ? 'result' : 'results'}
+            </Text>
+          }
           renderItem={({ item }) => (
             <ResultRow hit={item} onPress={onHitPress} colors={colors} />
           )}
@@ -111,13 +134,13 @@ function ResultRow({
   onPress: (h: SearchHit) => void;
   colors: ReturnType<typeof useTheme>['colors'];
 }) {
+  const snippet = stripHtml(hit.snippet);
   return (
-    <Pressable
+    <IconButton
+      // Single label folds the title + snippet so the row reads as one stop.
+      label={`${hit.bookTitle}, ${snippet}`}
       onPress={() => onPress(hit)}
-      style={({ pressed }) => [
-        styles.row,
-        { backgroundColor: pressed ? colors.surface : 'transparent' },
-      ]}
+      style={styles.row}
     >
       <Text style={[styles.bookLine, { color: colors.text }]} numberOfLines={1}>
         {hit.bookTitle}
@@ -129,9 +152,9 @@ function ResultRow({
           native HTML renderer wired up for v1, so strip tags and bold-mark the
           plain text instead. Renderable HTML is a Phase 4-ish polish. */}
       <Text style={[styles.snippet, { color: colors.text }]} numberOfLines={3}>
-        {stripHtml(hit.snippet)}
+        {snippet}
       </Text>
-    </Pressable>
+    </IconButton>
   );
 }
 
@@ -146,7 +169,10 @@ function Hint({
 }) {
   return (
     <View style={styles.center}>
-      <Text style={{ color: error ? colors.error : colors.textMuted, textAlign: 'center' }}>
+      <Text
+        accessibilityRole={error ? 'alert' : 'text'}
+        style={{ color: error ? colors.error : colors.textMuted, textAlign: 'center' }}
+      >
         {children}
       </Text>
     </View>
@@ -177,6 +203,15 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
+  resultCount: {
+    fontSize: 12,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 4,
+  },
   row: { paddingHorizontal: 16, paddingVertical: 12 },
   bookLine: { fontSize: 15, fontWeight: '600' },
   chapterLine: { fontSize: 12, marginTop: 2 },
