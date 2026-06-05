@@ -33,6 +33,7 @@ import { useChapter } from '../hooks/useChapter';
 import { useTheme } from '../providers/ThemeProvider';
 import { extractApiError } from '../services/errors';
 import { Annotation, HighlightColour, TextAnchor } from '../types';
+import LookupOverlay from '../components/LookupOverlay';
 
 const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:5000';
 const POSITION_SAVE_DELAY_MS = 1200;
@@ -61,6 +62,7 @@ export default function ReaderScreen() {
   // currentChapterId is local state, seeded from saved position once both
   // book and settings have loaded. anchor (from search results) wins if set.
   const [currentChapterId, setCurrentChapterId] = useState<string | null>(null);
+  const [lookupTerm, setLookupTerm] = useState<string | null>(null);
   const [initialScrollY, setInitialScrollY] = useState(0);
   const [tocOpen, setTocOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -407,7 +409,16 @@ export default function ReaderScreen() {
           onAddNote={openNoteEditorForSelection}
           onBookmark={() => handleBookmark(selection.anchor)}
           onClose={() => setSelection(null)}
+          onLookup={() => {
+            if (!selection) return;
+            setLookupTerm(selection.selectedText);
+            setSelection(null);
+          }}
         />
+      )}
+
+      {lookupTerm && (
+        <LookupOverlay term={lookupTerm} onClose={() => setLookupTerm(null)} />
       )}
 
       {activeHighlight && (

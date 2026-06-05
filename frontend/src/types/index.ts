@@ -179,3 +179,15 @@ export type CreateAnnotationInput = {
 export type UpdateAnnotationInput = { colour?: HighlightColour; noteBody?: string };
 export type CreateBookmarkInput = { chapterId: string | null; textAnchor: string; label: string | null };
 export type UpdateBookmarkInput = { label?: string };
+
+export type DictionarySense = { partOfSpeech: string; definition: string; examples: string[] };
+export type DictionaryResult = { word: string; found: boolean; senses: DictionarySense[] };
+
+export type WikipediaResult = {
+  term: string;
+  found: boolean;
+  title: string | null;
+  extract: string | null;
+  pageUrl: string | null;
+  thumbnailUrl: string | null;
+};
