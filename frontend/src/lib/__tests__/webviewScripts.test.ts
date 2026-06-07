@@ -1,4 +1,4 @@
-import { buildChapterDocument } from '../webviewScripts';
+import { buildChapterDocument, withAssetToken } from '../webviewScripts';
 import { ReadingSetting } from '../../types';
 
 // Minimal reading setting — only the typography fields the envelope reads.
@@ -84,5 +84,33 @@ describe('buildChapterDocument accessibility', () => {
     // Seed carries the highlight (with its hasNote flag) into first paint.
     expect(html).toContain('"id":"h1"');
     expect(html).toContain('"hasNote":true');
+  });
+});
+
+describe('withAssetToken', () => {
+  const html =
+    '<p><img src="/api/v1/books/abc/assets/OEBPS/img/1.png"/>' +
+    '<link rel="stylesheet" href="/api/v1/books/abc/assets/styles/main.css"/></p>';
+
+  it('Should_AppendTokenToAssetUrls_When_TokenProvided', () => {
+    const out = withAssetToken(html, 'tok 123');
+    // Token is URL-encoded and added to every in-app asset URL (img + link).
+    expect(out).toContain('/api/v1/books/abc/assets/OEBPS/img/1.png?access_token=tok%20123');
+    expect(out).toContain('/api/v1/books/abc/assets/styles/main.css?access_token=tok%20123');
+  });
+
+  it('Should_ReturnHtmlUnchanged_When_TokenIsNull', () => {
+    expect(withAssetToken(html, null)).toBe(html);
+  });
+
+  it('Should_NotTouchNonAssetUrls_When_Rewriting', () => {
+    const external = '<a href="https://example.com/page">x</a>';
+    expect(withAssetToken(external, 'tok')).toBe(external);
+  });
+
+  it('Should_PreserveFragment_When_AssetUrlHasHash', () => {
+    const svg = '<svg><use href="/api/v1/books/abc/assets/icons.svg#star"/></svg>';
+    const out = withAssetToken(svg, 'tok');
+    expect(out).toContain('/api/v1/books/abc/assets/icons.svg?access_token=tok#star');
   });
 });

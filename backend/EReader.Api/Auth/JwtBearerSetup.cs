@@ -37,6 +37,28 @@ public static class JwtBearerSetup
                     ValidateLifetime = true,
                     ClockSkew = TimeSpan.FromSeconds(30),
                 };
+
+                // Native WebView/<Image> subresource requests can't send an
+                // Authorization header, so for the two media GET routes (cover +
+                // in-chapter assets) we also accept the token via ?access_token=.
+                // MediaQueryToken scopes this to those paths; every other route
+                // still requires the header. Per-user ownership checks in the
+                // service layer are unchanged — this only adds a token transport.
+                options.Events = new JwtBearerEvents
+                {
+                    OnMessageReceived = context =>
+                    {
+                        var token = MediaQueryToken.ResolveQueryToken(
+                            context.Request.Method,
+                            context.Request.Path,
+                            context.Request.Query[MediaQueryToken.QueryKey]);
+                        if (token is not null)
+                        {
+                            context.Token = token;
+                        }
+                        return Task.CompletedTask;
+                    },
+                };
             });
 
         builder.Services.AddAuthorization();

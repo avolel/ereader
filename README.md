@@ -294,7 +294,8 @@ npx expo start --web      # web target → http://localhost:8081
 # or: npx expo start       # for Expo Go / simulators
 ```
 
-Point the app at a non-default API with `EXPO_PUBLIC_API_URL`:
+Point the app at a non-default API with `EXPO_PUBLIC_API_URL` (copy
+`frontend/.env.example` → `frontend/.env` and edit, or set it inline):
 
 ```bash
 EXPO_PUBLIC_API_URL=http://localhost:5043 npx expo start --web
@@ -303,6 +304,37 @@ EXPO_PUBLIC_API_URL=http://localhost:5043 npx expo start --web
 Dev CORS is configured in `Program.cs` to allow `localhost:8081`/`19006` (and the
 `127.0.0.1` equivalents) with credentials. Production CORS is intentionally not
 configured — set it per-environment at deploy time.
+
+#### Running on Android (native)
+
+The backend already binds `0.0.0.0:5000` (see `appsettings.Development.json`), so
+it's reachable from an emulator/device. The only thing that changes is the API URL
+the app points at — `localhost` inside the app means the device, not your machine:
+
+| Target | `EXPO_PUBLIC_API_URL` |
+|---|---|
+| Web / iOS simulator | `http://localhost:5000` |
+| Android emulator | `http://10.0.2.2:5000` |
+| Physical device (same Wi-Fi) | `http://<your-LAN-IP>:5000` |
+
+Native builds use [EAS Build](https://docs.expo.dev/build/introduction/) (managed
+workflow — no `ios/`/`android/` in git). Profiles live in `frontend/eas.json`;
+`expo-build-properties` permits cleartext HTTP for the `development`/`preview`
+profiles only (production requires an HTTPS backend). First run:
+
+```bash
+npm i -g eas-cli
+eas login
+eas init                                          # writes extra.eas.projectId
+eas build --platform android --profile development
+# install the dev-client APK on the emulator/device, then:
+npx expo start --dev-client
+```
+
+> Covers and in-chapter images on native authenticate differently from web:
+> the cover `<Image>` sends a Bearer header, and in-chapter WebView assets carry
+> the access token as an `?access_token=` query param (honoured only on the media
+> GET routes — see `JwtBearerSetup.cs` / `MediaQueryToken.cs`).
 
 ### Step 5 — get some books
 

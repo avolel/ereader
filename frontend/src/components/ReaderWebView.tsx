@@ -3,7 +3,8 @@ import { StyleSheet } from 'react-native';
 import { WebView, WebViewMessageEvent } from 'react-native-webview';
 
 import { useThemeContext } from '../providers/ThemeProvider';
-import { buildChapterDocument } from '../lib/webviewScripts';
+import { buildChapterDocument, withAssetToken } from '../lib/webviewScripts';
+import { useAccessToken } from '../hooks/useAccessToken';
 import { HighlightColour, TextAnchor } from '../types';
 
 export type DOMRectLike = { x: number; y: number; width: number; height: number };
@@ -54,6 +55,10 @@ const ReaderWebView = forwardRef<ReaderWebViewHandle, Props>(function ReaderWebV
 ) {
   const { globalSetting, theme } = useThemeContext();
   const webRef = useRef<WebView>(null);
+  // Re-read the token per chapter so each chapter renders with a fresh one; the
+  // token is appended to in-chapter asset URLs (see withAssetToken) because the
+  // WebView can't send an Authorization header on subresource requests.
+  const accessToken = useAccessToken(chapterHtml);
 
   useImperativeHandle(ref, () => ({
     scrollTo: (y: number) => {
@@ -74,7 +79,7 @@ const ReaderWebView = forwardRef<ReaderWebViewHandle, Props>(function ReaderWebV
     () =>
       buildChapterDocument(
         {
-          chapterHtml,
+          chapterHtml: withAssetToken(chapterHtml, accessToken),
           setting: globalSetting,
           webviewColors: theme.colors.webview,
           resolvedMode: theme.resolvedMode,
@@ -85,7 +90,7 @@ const ReaderWebView = forwardRef<ReaderWebViewHandle, Props>(function ReaderWebV
       ),
     // highlights seeds first paint only; live updates re-inject via applyHighlights.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [chapterHtml, globalSetting, theme.colors.webview, theme.resolvedMode, language, initialScrollY],
+    [chapterHtml, accessToken, globalSetting, theme.colors.webview, theme.resolvedMode, language, initialScrollY],
   );
 
   function handleMessage(event: WebViewMessageEvent) {

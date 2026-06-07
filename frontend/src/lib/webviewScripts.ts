@@ -146,6 +146,38 @@ ${buildAnnotationScript(highlights)}
 </html>`;
 }
 
+// Native-only: a WebView can't attach an Authorization header to subresource
+// requests (in-chapter <img>, linked stylesheets), and absolute-path asset URLs
+// like `/api/v1/books/{id}/assets/...` resolve against the WebView base URL's
+// *origin only* — so a token on the base URL's query string would be dropped.
+// We therefore append `?access_token=` to each in-app asset URL in the chapter
+// HTML itself. The backend honours this query token only on the media GET routes
+// (see MediaQueryToken.cs). No-op without a token. The web shim is a separate
+// file and never calls this (its iframe loads assets same-origin).
+//
+// Known gap: assets referenced from *within* a linked CSS file (e.g.
+// `background: url(...)`) aren't rewritten here and would still 401. EPUBs rarely
+// rely on those; Phase B's signed-URL transport (B1) removes the limitation.
+export function withAssetToken(chapterHtml: string, token: string | null): string {
+  if (!token) return chapterHtml;
+  const encoded = encodeURIComponent(token);
+  return chapterHtml.replace(
+    /(\b(?:src|href)\s*=\s*["'])(\/api\/v1\/books\/[^"']*?\/assets\/[^"']*?)(["'])/gi,
+    (_match, prefix: string, assetUrl: string, quote: string) =>
+      `${prefix}${appendQueryParam(assetUrl, 'access_token', encoded)}${quote}`,
+  );
+}
+
+// Insert `key=value` into a URL's query string, keeping any existing query and
+// preserving a trailing #fragment (so e.g. `foo.svg#icon` stays addressable).
+function appendQueryParam(url: string, key: string, value: string): string {
+  const hashIndex = url.indexOf('#');
+  const path = hashIndex >= 0 ? url.slice(0, hashIndex) : url;
+  const fragment = hashIndex >= 0 ? url.slice(hashIndex) : '';
+  const separator = path.includes('?') ? '&' : '?';
+  return `${path}${separator}${key}=${value}${fragment}`;
+}
+
 function cssFontFamily(family: string): string {
   switch (family.toLowerCase()) {
     case 'serif':
